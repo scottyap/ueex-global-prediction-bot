@@ -72,6 +72,30 @@ function cleanCommandText(text) {
   return String(text || "").trim().replace(/@\w+/g, "");
 }
 
+function scheduleDeleteMessage(chatId, messageId, delayMs = 10000) {
+  if (!chatId || !messageId) return;
+
+  setTimeout(async () => {
+    try {
+      await bot.telegram.deleteMessage(chatId, messageId);
+    } catch (error) {
+      // Ignore delete failures, for example missing permission or message already deleted.
+    }
+  }, delayMs);
+}
+
+async function deleteStoredPrompt(ctx) {
+  const session = getSession(ctx);
+
+  if (!session?.promptMessageId || !ctx.chat?.id) return;
+
+  try {
+    await ctx.telegram.deleteMessage(ctx.chat.id, session.promptMessageId);
+  } catch (error) {
+    // Ignore delete failures.
+  }
+}
+
 function isAdminId(userId) {
   return ADMIN_USER_IDS.includes(String(userId));
 }
@@ -96,7 +120,16 @@ async function requireAdmin(ctx) {
   const ok = await isAdminUser(ctx);
 
   if (!ok) {
-    await ctx.reply("Only admins can use this command.");
+    const warning = await ctx.reply("Only admins can use this command.");
+
+    if (ctx.chat?.id && ctx.message?.message_id) {
+      scheduleDeleteMessage(ctx.chat.id, ctx.message.message_id, 10000);
+    }
+
+    if (ctx.chat?.id && warning?.message_id) {
+      scheduleDeleteMessage(ctx.chat.id, warning.message_id, 10000);
+    }
+
     return false;
   }
 
@@ -109,6 +142,24 @@ function normalizeTeam(team) {
     .toUpperCase()
     .replace(/[^A-Z0-9]/g, "")
     .slice(0, 12);
+}
+
+const TEAM_FLAG_MAP = {
+  ARG: "🇦🇷", AUS: "🇦🇺", AUT: "🇦🇹", BEL: "🇧🇪", BRA: "🇧🇷", CAN: "🇨🇦",
+  CHI: "🇨🇱", CHN: "🇨🇳", COL: "🇨🇴", CRO: "🇭🇷", CZE: "🇨🇿", DEN: "🇩🇰",
+  ECU: "🇪🇨", ENG: "🏴", ESP: "🇪🇸", FRA: "🇫🇷", GER: "🇩🇪", GHA: "🇬🇭",
+  IRN: "🇮🇷", ITA: "🇮🇹", JPN: "🇯🇵", KOR: "🇰🇷", MAR: "🇲🇦", MEX: "🇲🇽",
+  NED: "🇳🇱", NGA: "🇳🇬", POL: "🇵🇱", POR: "🇵🇹", QAT: "🇶🇦", RUS: "🇷🇺",
+  SEN: "🇸🇳", SRB: "🇷🇸", SUI: "🇨🇭", TUN: "🇹🇳", UKR: "🇺🇦", URU: "🇺🇾",
+  USA: "🇺🇸", WAL: "🏴", KSA: "🇸🇦"
+};
+
+function getTeamFlag(team) {
+  return TEAM_FLAG_MAP[normalizeTeam(team)] || "🏳️";
+}
+
+function formatTeamWithFlag(team) {
+  return `${getTeamFlag(team)} ${normalizeTeam(team)}`;
 }
 
 function isValidUid(uid) {
@@ -133,8 +184,13 @@ function parsePositiveAmount(value) {
 
 function formatAmount(value, maxDp = 8) {
   const decimal = new Decimal(value || 0);
+
+  if (decimal.isZero()) return "0";
+
   const fixed = decimal.toDecimalPlaces(maxDp, Decimal.ROUND_DOWN).toFixed();
-  return fixed.replace(/\.?0+$/, "");
+  const cleaned = fixed.replace(/(\.\d*?)0+$/, "$1").replace(/\.$/, "");
+
+  return cleaned || "0";
 }
 
 function pad2(value) {
@@ -190,6 +246,10 @@ function labelForSelection(match, selection) {
   if (selection === "DRAW") return "Draw";
   if (String(selection).toUpperCase() === "OTHERS") return "Others";
   return String(selection || "Unknown");
+}
+
+function formatSelectionButtonLabel(match, option, amount) {
+  return `${getTeamFlag(match.team_a)} ${labelForSelection(match, option)} ${getTeamFlag(match.team_b)} | ${formatAmount(amount)} ${match.currency}`;
 }
 
 function parseScoreValue(input) {
@@ -387,18 +447,12 @@ function getTotalPool(totals) {
 
 function buildMatchKeyboard(match, totals) {
   const options = getSelectionOptions(match);
-  const rows = [];
-
-  for (let i = 0; i < options.length; i += 2) {
-    const rowOptions = options.slice(i, i + 2);
-
-    rows.push(rowOptions.map((option) =>
-      Markup.button.callback(
-        `${labelForSelection(match, option)} | ${formatAmount(totals[option] || 0)} ${match.currency}`,
-        `wcsel:${match.match_code}:${option}`
-      )
-    ));
-  }
+  const rows = options.map((option) => [
+    Markup.button.callback(
+      formatSelectionButtonLabel(match, option, totals[option] || 0),
+      `wcsel:${match.match_code}:${option}`
+    )
+  ]);
 
   return Markup.inlineKeyboard(rows);
 }
@@ -410,7 +464,7 @@ function buildMatchMessage(match, totals) {
   return `⚽ World Cup Prediction
 
 🔸 Match ID: ${match.match_code}
-🔸 Match: ${match.team_a} vs ${match.team_b}
+🔸 Match: ${formatTeamWithFlag(match.team_a)} vs ${formatTeamWithFlag(match.team_b)}
 🔸 Status: ${statusText}
 🔸 Betting Time Left: ${formatTimeLeft(match.betting_end_at)}
 
@@ -524,7 +578,7 @@ async function createMatch(ctx, text) {
     })
     .eq("match_code", data.match_code);
 
-  return ctx.reply(`✅ Match created: ${data.match_code}\n${teamA} vs ${teamB}\nBetting closes in ${hours}h ${minutes}m.`);
+  return ctx.reply(`✅ Match created: ${data.match_code}\n${formatTeamWithFlag(teamA)} vs ${formatTeamWithFlag(teamB)}\nBetting closes in ${days}d ${hours}h ${minutes}m.`);
 }
 
 async function showWorldCupEntry(ctx) {
@@ -535,9 +589,9 @@ async function showWorldCupEntry(ctx) {
   const user = await getUserByTelegramId(ctx.from.id);
 
   if (!user) {
-    setSession(ctx, { step: "awaiting_uid" });
+    await deleteStoredPrompt(ctx);
 
-    return ctx.reply(
+    const prompt = await ctx.reply(
       `Please enter your UEEx UID.`,
       {
         reply_markup: {
@@ -546,6 +600,9 @@ async function showWorldCupEntry(ctx) {
         }
       }
     );
+
+    setSession(ctx, { step: "awaiting_uid", promptMessageId: prompt.message_id });
+    return;
   }
 
   return showOpenMatches(ctx);
@@ -561,7 +618,7 @@ async function showOpenMatches(ctx) {
 
   const keyboard = openMatches.map((match) => [
     Markup.button.callback(
-      `${match.team_a} vs ${match.team_b} (${match.match_code})`,
+      `${formatTeamWithFlag(match.team_a)} vs ${formatTeamWithFlag(match.team_b)} (${match.match_code})`,
       `wcmatch:${match.match_code}`
     )
   ]);
@@ -627,7 +684,7 @@ async function handleAmountInput(ctx, text, session) {
     first_name: ctx.from.first_name || null,
     last_name: ctx.from.last_name || null,
     selection: session.selection,
-    expected_amount: amount.toFixed(),
+    expected_amount: amount.toString(),
     confirmed_amount: 0,
     currency: match.currency,
     status: "pending",
@@ -650,16 +707,16 @@ async function handleAmountInput(ctx, text, session) {
   return ctx.reply(`✅ Pending Order Created
 
 Order ID: ${data.order_code}
-Match: ${match.team_a} vs ${match.team_b}
+Match: ${formatTeamWithFlag(match.team_a)} vs ${formatTeamWithFlag(match.team_b)}
 Selection: ${labelForSelection(match, data.selection)}
-Amount: ${formatAmount(data.expected_amount)} ${match.currency}
+Amount: ${formatAmount(amount)} ${match.currency}
 
-Please transfer ${formatAmount(data.expected_amount)} ${match.currency} via UEEx internal transfer to UID ${match.receiver_uid}.
+Please transfer ${formatAmount(amount)} ${match.currency} via UEEx internal transfer to UID ${match.receiver_uid}.
 
 Your vote will only be counted after admin confirmation.
 
 Admin confirmation command:
-/confirm_${data.order_code}_${formatAmount(data.expected_amount)}`);
+/confirm_${data.order_code}_${formatAmount(amount)}`);
 }
 
 async function confirmOrder(ctx, text) {
@@ -720,7 +777,7 @@ async function confirmOrder(ctx, text) {
 
 Order ID: ${orderCode}
 UID: ${order.ueex_uid}
-Match: ${matchData.team_a} vs ${matchData.team_b}
+Match: ${formatTeamWithFlag(matchData.team_a)} vs ${formatTeamWithFlag(matchData.team_b)}
 Selection: ${labelForSelection(matchData, order.selection)}
 Confirmed: ${formatAmount(amount)} ${matchData.currency}`);
 }
@@ -857,7 +914,7 @@ async function setMatchResult(ctx, text) {
 
   return ctx.reply(`✅ Result recorded
 
-Match: ${matchData.team_a} vs ${matchData.team_b}
+Match: ${formatTeamWithFlag(matchData.team_a)} vs ${formatTeamWithFlag(matchData.team_b)}
 Result: ${labelForSelection(matchData, selection)}
 
 Next step:
@@ -937,7 +994,7 @@ function buildSettlementPreviewMessage(matchData, settlement) {
   return `🏆 Settlement Preview
 
 Match ID: ${matchData.match_code}
-Match: ${matchData.team_a} vs ${matchData.team_b}
+Match: ${formatTeamWithFlag(matchData.team_a)} vs ${formatTeamWithFlag(matchData.team_b)}
 Result: ${labelForSelection(matchData, settlement.result)}
 
 Total Pool: ${formatAmount(settlement.totalPool)} ${matchData.currency}
@@ -1097,7 +1154,7 @@ async function settleMatch(ctx, text) {
   return ctx.reply(`🎉 World Cup Prediction Settled
 
 Match ID: ${matchCode}
-Match: ${matchData.team_a} vs ${matchData.team_b}
+Match: ${formatTeamWithFlag(matchData.team_a)} vs ${formatTeamWithFlag(matchData.team_b)}
 Result: ${labelForSelection(matchData, settlement.result)}
 
 Total Pool: ${formatAmount(settlement.total_pool)} ${matchData.currency}
@@ -1231,10 +1288,10 @@ bot.on("callback_query", async (ctx) => {
       const user = await getUserByTelegramId(ctx.from.id);
 
       if (!user) {
-        setSession(ctx, { step: "awaiting_uid", nextMatchCode: matchCode, nextSelection: selection });
+        await deleteStoredPrompt(ctx);
         await ctx.answerCbQuery();
 
-        return ctx.reply(
+        const prompt = await ctx.reply(
           `Please enter your UEEx UID first.`,
           {
             reply_markup: {
@@ -1243,17 +1300,21 @@ bot.on("callback_query", async (ctx) => {
             }
           }
         );
+
+        setSession(ctx, {
+          step: "awaiting_uid",
+          nextMatchCode: matchCode,
+          nextSelection: selection,
+          promptMessageId: prompt.message_id
+        });
+
+        return;
       }
 
-      setSession(ctx, {
-        step: "awaiting_amount",
-        matchCode,
-        selection
-      });
-
+      await deleteStoredPrompt(ctx);
       await ctx.answerCbQuery();
 
-      return ctx.reply(
+      const prompt = await ctx.reply(
         `Selection: ${labelForSelection(match, selection)}\n\nPlease enter your expected ${match.currency} amount.`,
         {
           reply_markup: {
@@ -1262,6 +1323,15 @@ bot.on("callback_query", async (ctx) => {
           }
         }
       );
+
+      setSession(ctx, {
+        step: "awaiting_amount",
+        matchCode,
+        selection,
+        promptMessageId: prompt.message_id
+      });
+
+      return;
     }
   } catch (error) {
     console.error("Callback query error:", error);
@@ -1327,15 +1397,9 @@ bot.on("message", async (ctx) => {
       await upsertUser(ctx, uid);
 
       if (session.nextMatchCode && session.nextSelection) {
-        setSession(ctx, {
-          step: "awaiting_amount",
-          matchCode: session.nextMatchCode,
-          selection: session.nextSelection
-        });
-
         const match = await getMatch(session.nextMatchCode);
 
-        return ctx.reply(
+        const prompt = await ctx.reply(
           `✅ UID confirmed: ${uid}\n\nSelection: ${labelForSelection(match, session.nextSelection)}\n\nPlease enter your expected ${match.currency} amount.`,
           {
             reply_markup: {
@@ -1344,6 +1408,15 @@ bot.on("message", async (ctx) => {
             }
           }
         );
+
+        setSession(ctx, {
+          step: "awaiting_amount",
+          matchCode: session.nextMatchCode,
+          selection: session.nextSelection,
+          promptMessageId: prompt.message_id
+        });
+
+        return;
       }
 
       clearSession(ctx);
