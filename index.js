@@ -13,11 +13,11 @@ const PORT = process.env.PORT || 3000;
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
-const UID_MIN = Number(process.env.UID_MIN || 1000001);
-const UID_MAX = Number(process.env.UID_MAX || 3500000);
+const UID_MIN = Number(process.env.UID_MIN || 1022220);
+const UID_MAX = Number(process.env.UID_MAX || 35000000);
 const RECEIVER_UID = process.env.RECEIVER_UID || "1234567";
 const DEFAULT_CURRENCY = process.env.DEFAULT_CURRENCY || "UE";
-const PLATFORM_FEE_BPS = Number(process.env.PLATFORM_FEE_BPS || 1000);
+const PLATFORM_FEE_BPS = Number(process.env.PLATFORM_FEE_BPS || 500);
 const MAX_OPEN_MATCHES_SHOWN = Number(process.env.MAX_OPEN_MATCHES_SHOWN || 20);
 
 const ADMIN_USER_IDS = (process.env.ADMIN_USER_IDS || "")
@@ -137,37 +137,114 @@ function formatAmount(value, maxDp = 8) {
   return fixed.replace(/\.?0+$/, "");
 }
 
+function pad2(value) {
+  return String(value).padStart(2, "0");
+}
+
 function formatTimeLeft(endAt) {
   const diffMs = new Date(endAt).getTime() - Date.now();
 
   if (diffMs <= 0) return "Closed";
 
-  const totalMinutes = Math.floor(diffMs / 60000);
-  const hours = Math.floor(totalMinutes / 60);
-  const minutes = totalMinutes % 60;
+  const totalSeconds = Math.floor(diffMs / 1000);
+  const days = Math.floor(totalSeconds / 86400);
+  const hours = Math.floor((totalSeconds % 86400) / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  const time = `${hours}:${pad2(minutes)}:${pad2(seconds)}`;
 
-  if (hours <= 0) return `${minutes}m`;
-  return `${hours}h ${minutes}m`;
+  return days > 0 ? `${days}d ${time}` : time;
 }
 
 function isBettingOpen(match) {
   return match.status === "open" && new Date(match.betting_end_at).getTime() > Date.now();
 }
 
+function getSelectionOptions(match) {
+  const fallback = ["A", "DRAW", "B"];
+  const raw = match?.selection_options;
+
+  if (!raw) return fallback;
+
+  if (Array.isArray(raw)) {
+    return raw.map((item) => String(item)).filter(Boolean);
+  }
+
+  if (typeof raw === "string") {
+    try {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) {
+        return parsed.map((item) => String(item)).filter(Boolean);
+      }
+    } catch (error) {
+      return fallback;
+    }
+  }
+
+  return fallback;
+}
+
 function labelForSelection(match, selection) {
   if (selection === "A") return `${match.team_a} Win`;
   if (selection === "B") return `${match.team_b} Win`;
-  return "Draw";
+  if (selection === "DRAW") return "Draw";
+  if (String(selection).toUpperCase() === "OTHERS") return "Others";
+  return String(selection || "Unknown");
+}
+
+function parseScoreValue(input) {
+  const match = String(input || "").trim().match(/^(\d+):(\d+)$/);
+  if (!match) return null;
+
+  return {
+    home: Number(match[1]),
+    away: Number(match[2]),
+    text: `${Number(match[1])}:${Number(match[2])}`
+  };
+}
+
+function generateScoreOptions(startScore, endScore, lastOption) {
+  const start = parseScoreValue(startScore);
+  const end = parseScoreValue(endScore);
+
+  if (!start || !end) return null;
+  if (start.home > end.home || start.away > end.away) return null;
+
+  const scores = [];
+
+  for (let home = start.home; home <= end.home; home += 1) {
+    for (let away = start.away; away <= end.away; away += 1) {
+      scores.push(`${home}:${away}`);
+    }
+  }
+
+  scores.sort((a, b) => {
+    const sa = parseScoreValue(a);
+    const sb = parseScoreValue(b);
+    const totalA = sa.home + sa.away;
+    const totalB = sb.home + sb.away;
+
+    if (totalA !== totalB) return totalA - totalB;
+    return sb.home - sa.home;
+  });
+
+  const finalOption = String(lastOption || "Others").trim() || "Others";
+  return [...scores, finalOption];
 }
 
 function resultInputToSelection(match, input) {
-  const value = normalizeTeam(input);
+  const raw = String(input || "").trim();
+  const options = getSelectionOptions(match);
 
-  if (value === "DRAW" || value === "TIE") return "DRAW";
-  if (value === normalizeTeam(match.team_a)) return "A";
-  if (value === normalizeTeam(match.team_b)) return "B";
-  if (value === "A") return "A";
-  if (value === "B") return "B";
+  const exact = options.find((option) => option.toLowerCase() === raw.toLowerCase());
+  if (exact) return exact;
+
+  const legacyValue = normalizeTeam(raw);
+  if (legacyValue === "DRAW" || legacyValue === "TIE") return "DRAW";
+  if (legacyValue === normalizeTeam(match.team_a)) return "A";
+  if (legacyValue === normalizeTeam(match.team_b)) return "B";
+  if (legacyValue === "A") return "A";
+  if (legacyValue === "B") return "B";
 
   return null;
 }
@@ -273,7 +350,10 @@ async function getOpenMatches(chatId) {
   return data || [];
 }
 
-async function getMatchTotals(matchCode) {
+async function getMatchTotals(matchCode, match = null) {
+  const matchData = match || (await getMatch(matchCode));
+  const options = getSelectionOptions(matchData);
+
   const { data, error } = await supabase
     .from("wc_orders")
     .select("selection, confirmed_amount")
@@ -284,63 +364,57 @@ async function getMatchTotals(matchCode) {
     throw new Error(`Failed to load totals: ${error.message}`);
   }
 
-  const totals = {
-    A: new Decimal(0),
-    DRAW: new Decimal(0),
-    B: new Decimal(0)
-  };
+  const totals = {};
+
+  for (const option of options) {
+    totals[option] = new Decimal(0);
+  }
 
   for (const row of data || []) {
-    if (totals[row.selection]) {
-      totals[row.selection] = totals[row.selection].plus(row.confirmed_amount || 0);
+    if (!totals[row.selection]) {
+      totals[row.selection] = new Decimal(0);
     }
+
+    totals[row.selection] = totals[row.selection].plus(row.confirmed_amount || 0);
   }
 
   return totals;
 }
 
+function getTotalPool(totals) {
+  return Object.values(totals).reduce((sum, amount) => sum.plus(amount), new Decimal(0));
+}
+
 function buildMatchKeyboard(match, totals) {
-  return Markup.inlineKeyboard([
-    [
+  const options = getSelectionOptions(match);
+  const rows = [];
+
+  for (let i = 0; i < options.length; i += 2) {
+    const rowOptions = options.slice(i, i + 2);
+
+    rows.push(rowOptions.map((option) =>
       Markup.button.callback(
-        `${match.team_a} Win | ${formatAmount(totals.A)} ${match.currency}`,
-        `wcsel:${match.match_code}:A`
+        `${labelForSelection(match, option)} | ${formatAmount(totals[option] || 0)} ${match.currency}`,
+        `wcsel:${match.match_code}:${option}`
       )
-    ],
-    [
-      Markup.button.callback(
-        `Draw | ${formatAmount(totals.DRAW)} ${match.currency}`,
-        `wcsel:${match.match_code}:DRAW`
-      )
-    ],
-    [
-      Markup.button.callback(
-        `${match.team_b} Win | ${formatAmount(totals.B)} ${match.currency}`,
-        `wcsel:${match.match_code}:B`
-      )
-    ]
-  ]);
+    ));
+  }
+
+  return Markup.inlineKeyboard(rows);
 }
 
 function buildMatchMessage(match, totals) {
-  const totalPool = totals.A.plus(totals.DRAW).plus(totals.B);
+  const totalPool = getTotalPool(totals);
   const statusText = isBettingOpen(match) ? "Open" : match.status === "open" ? "Closed" : match.status.toUpperCase();
 
   return `⚽ World Cup Prediction
 
-Match ID: ${match.match_code}
-Match: ${match.team_a} vs ${match.team_b}
-Status: ${statusText}
-Betting Time Left: ${formatTimeLeft(match.betting_end_at)}
+🔸 Match ID: ${match.match_code}
+🔸 Match: ${match.team_a} vs ${match.team_b}
+🔸 Status: ${statusText}
+🔸 Betting Time Left: ${formatTimeLeft(match.betting_end_at)}
 
-Pool:
-${match.team_a} Win: ${formatAmount(totals.A)} ${match.currency}
-Draw: ${formatAmount(totals.DRAW)} ${match.currency}
-${match.team_b} Win: ${formatAmount(totals.B)} ${match.currency}
-
-Total Pool: ${formatAmount(totalPool)} ${match.currency}
-
-Tap a button below to create a pending order. Your vote is counted only after admin confirmation.`;
+🎉Total Pool: ${formatAmount(totalPool)} ${match.currency}`;
 }
 
 async function updateLiveMatchMessage(matchCode) {
@@ -348,7 +422,7 @@ async function updateLiveMatchMessage(matchCode) {
 
   if (!match || !match.live_message_id || !match.chat_id) return;
 
-  const totals = await getMatchTotals(matchCode);
+  const totals = await getMatchTotals(matchCode, match);
 
   try {
     await bot.telegram.editMessageText(
@@ -373,28 +447,41 @@ async function createMatch(ctx, text) {
   }
 
   const cleaned = cleanCommandText(text);
-  const match = cleaned.match(/^\/worldcup_([A-Za-z0-9]+)_([A-Za-z0-9]+)_(\d+)_(\d+)$/i);
+  const match = cleaned.match(/^\/worldcup_([A-Za-z0-9]+)_([A-Za-z0-9]+)_(\d+)_(\d+)_(\d+)_([0-9]+:[0-9]+)_([0-9]+:[0-9]+)_([A-Za-z0-9]+)$/i);
 
   if (!match) {
-    return ctx.reply("Invalid format.\nExample: /worldcup_FRA_BRA_1_20");
+    return ctx.reply("Invalid format.\nExample: /worldcup_FRA_BRA_1_1_20_0:0_3:3_Others");
   }
 
   const teamA = normalizeTeam(match[1]);
   const teamB = normalizeTeam(match[2]);
-  const hours = Number(match[3]);
-  const minutes = Number(match[4]);
+  const days = Number(match[3]);
+  const hours = Number(match[4]);
+  const minutes = Number(match[5]);
+  const selectionOptions = generateScoreOptions(match[6], match[7], match[8]);
 
   if (!teamA || !teamB || teamA === teamB) {
-    return ctx.reply("Invalid teams. Example: /worldcup_FRA_BRA_1_20");
+    return ctx.reply("Invalid teams. Example: /worldcup_FRA_BRA_1_1_20_0:0_3:3_Others");
   }
 
-  if (hours < 0 || minutes < 0 || minutes > 59 || hours * 60 + minutes <= 0) {
-    return ctx.reply("Invalid betting time. Example: /worldcup_FRA_BRA_1_20");
+  if (
+    days < 0 ||
+    hours < 0 ||
+    hours > 23 ||
+    minutes < 0 ||
+    minutes > 59 ||
+    days * 1440 + hours * 60 + minutes <= 0
+  ) {
+    return ctx.reply("Invalid betting time. Example: /worldcup_FRA_BRA_1_1_20_0:0_3:3_Others");
+  }
+
+  if (!selectionOptions || selectionOptions.length < 2) {
+    return ctx.reply("Invalid score range. Example: /worldcup_FRA_BRA_1_1_20_0:0_3:3_Others");
   }
 
   const matchCode = await generateUniqueCode("WC", "wc_matches", "match_code");
   const now = new Date();
-  const bettingEndAt = new Date(now.getTime() + (hours * 60 + minutes) * 60 * 1000);
+  const bettingEndAt = new Date(now.getTime() + (days * 1440 + hours * 60 + minutes) * 60 * 1000);
 
   const payload = {
     match_code: matchCode,
@@ -404,6 +491,7 @@ async function createMatch(ctx, text) {
     currency: DEFAULT_CURRENCY,
     receiver_uid: RECEIVER_UID,
     fee_bps: PLATFORM_FEE_BPS,
+    selection_options: selectionOptions,
     status: "open",
     betting_start_at: now.toISOString(),
     betting_end_at: bettingEndAt.toISOString(),
@@ -422,7 +510,7 @@ async function createMatch(ctx, text) {
     return ctx.reply(`Failed to create match: ${error.message}`);
   }
 
-  const totals = await getMatchTotals(data.match_code);
+  const totals = await getMatchTotals(data.match_code, data);
   const liveMessage = await ctx.reply(
     buildMatchMessage(data, totals),
     buildMatchKeyboard(data, totals)
@@ -450,7 +538,7 @@ async function showWorldCupEntry(ctx) {
     setSession(ctx, { step: "awaiting_uid" });
 
     return ctx.reply(
-      `Please enter your UEEx UID.\n\nValid UID range: ${UID_MIN} - ${UID_MAX}`,
+      `Please enter your UEEx UID.`,
       {
         reply_markup: {
           force_reply: true,
@@ -491,7 +579,7 @@ async function showSelectedMatch(ctx, matchCode, edit = false) {
     return ctx.answerCbQuery ? ctx.answerCbQuery("Match not found.") : ctx.reply("Match not found.");
   }
 
-  const totals = await getMatchTotals(matchCode);
+  const totals = await getMatchTotals(matchCode, match);
   const message = buildMatchMessage(match, totals);
   const keyboard = buildMatchKeyboard(match, totals);
 
@@ -728,10 +816,10 @@ async function setMatchResult(ctx, text) {
   if (!(await requireAdmin(ctx))) return;
 
   const cleaned = cleanCommandText(text);
-  const commandMatch = cleaned.match(/^\/result_(WC[A-Z0-9]+)_([A-Za-z0-9]+)$/i);
+  const commandMatch = cleaned.match(/^\/result_(WC[A-Z0-9]+)_([A-Za-z0-9:]+)$/i);
 
   if (!commandMatch) {
-    return ctx.reply("Invalid format.\nExample: /result_WC0001_DRAW");
+    return ctx.reply("Invalid format.\nExample: /result_WC0001_0:0");
   }
 
   const matchCode = commandMatch[1].toUpperCase();
@@ -749,7 +837,7 @@ async function setMatchResult(ctx, text) {
   const selection = resultInputToSelection(matchData, resultInput);
 
   if (!selection) {
-    return ctx.reply(`Invalid result. Use ${matchData.team_a}, DRAW, or ${matchData.team_b}.\nExample: /result_${matchCode}_DRAW`);
+    return ctx.reply(`Invalid result. Use one of the score options or Others.\nExample: /result_${matchCode}_0:0`);
   }
 
   const { error } = await supabase
@@ -1069,11 +1157,11 @@ User:
 /myvote - View my votes
 
 Admin:
-/worldcup_FRA_BRA_1_20 - Create match
+/worldcup_FRA_BRA_1_1_20_0:0_3:3_Others - Create match
 /confirm_O000123_1150 - Confirm payment
 /void_O000123 - Void order
 /lock_WC0001 - Lock match
-/result_WC0001_DRAW - Record result
+/result_WC0001_0:0 - Record result
 /preview_WC0001 - Generate settlement preview
 /settle_WC0001 - Publish settlement
 /chatid - Check chat ID
@@ -1127,7 +1215,9 @@ bot.on("callback_query", async (ctx) => {
     }
 
     if (data.startsWith("wcsel:")) {
-      const [, matchCode, selection] = data.split(":");
+      const parts = data.split(":");
+      const matchCode = parts[1];
+      const selection = parts.slice(2).join(":");
       const match = await getMatch(matchCode);
 
       if (!match) {
@@ -1145,7 +1235,7 @@ bot.on("callback_query", async (ctx) => {
         await ctx.answerCbQuery();
 
         return ctx.reply(
-          `Please enter your UEEx UID first.\n\nValid UID range: ${UID_MIN} - ${UID_MAX}`,
+          `Please enter your UEEx UID first.`,
           {
             reply_markup: {
               force_reply: true,
@@ -1231,7 +1321,7 @@ bot.on("message", async (ctx) => {
       const uid = String(text || "").trim();
 
       if (!isValidUid(uid)) {
-        return ctx.reply(`UID format error. Please enter a valid UID between ${UID_MIN} and ${UID_MAX}.`);
+        return ctx.reply("UID format error. Please enter a valid UEEx UID.");
       }
 
       await upsertUser(ctx, uid);
