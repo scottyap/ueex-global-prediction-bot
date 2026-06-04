@@ -558,12 +558,17 @@ function buildMatchKeyboard(match, totals) {
 
 function buildScoreKeyboard(match, outcome) {
   const options = getOptionsByOutcome(match, outcome);
-  const rows = options.map((option) => [
+  const buttons = options.map((option) =>
     Markup.button.callback(
       formatSelectionButtonLabel(match, option),
       `wcsel:${match.match_code}:${option}`
     )
-  ]);
+  );
+
+  const rows = [];
+  for (let i = 0; i < buttons.length; i += 2) {
+    rows.push(buttons.slice(i, i + 2));
+  }
 
   rows.push([Markup.button.callback("⬅️ Back", `wcmatch:${match.match_code}`)]);
 
@@ -575,9 +580,7 @@ function buildScoreMessage(match, totals, outcome) {
   const outcomePool = getOutcomeTotal(match, totals, outcome);
   const statusText = isBettingOpen(match) ? "Open" : match.status === "open" ? "Closed" : match.status.toUpperCase();
 
-  return `⚽ World Cup Prediction
-
-🔸 Match ID: ${match.match_code}
+  return `🔸 Match ID: ${match.match_code}
 🔸 Match: ${formatTeamWithFlag(match.team_a)} vs ${formatTeamWithFlag(match.team_b)}
 🔸 Status: ${statusText}
 🔸 Betting Time Left: ${formatTimeLeft(match.betting_end_at)}
@@ -594,9 +597,7 @@ function buildMatchMessage(match, totals) {
   const totalPool = getTotalPool(totals);
   const statusText = isBettingOpen(match) ? "Open" : match.status === "open" ? "Closed" : match.status.toUpperCase();
 
-  return `⚽ World Cup Prediction
-
-🔸 Match ID: ${match.match_code}
+  return `🔸 Match ID: ${match.match_code}
 🔸 Match: ${formatTeamWithFlag(match.team_a)} vs ${formatTeamWithFlag(match.team_b)}
 🔸 Status: ${statusText}
 🔸 Betting Time Left: ${formatTimeLeft(match.betting_end_at)}
@@ -644,6 +645,21 @@ async function editLiveMessage(chatId, messageId, imageUrl, text, keyboard = nul
     text,
     keyboard || undefined
   );
+}
+
+async function editCallbackMessage(ctx, text, keyboard = null) {
+  const message = ctx.callbackQuery?.message;
+  const hasPhoto = Array.isArray(message?.photo) && message.photo.length > 0;
+
+  if (hasPhoto && ctx.editMessageCaption) {
+    return ctx.editMessageCaption(text, keyboard || undefined);
+  }
+
+  if (ctx.editMessageText) {
+    return ctx.editMessageText(text, keyboard || undefined);
+  }
+
+  return ctx.reply(text, keyboard || undefined);
 }
 
 async function updateLiveMatchMessage(matchCode) {
@@ -828,8 +844,10 @@ async function showOpenMatches(ctx) {
     )
   ]);
 
-  return ctx.reply(
-    "⚽ World Cup Prediction\n\nPlease select a match:",
+  return replyWithOptionalPhoto(
+    ctx,
+    WORLDCUP_IMAGE_URL,
+    "Please select a match:",
     Markup.inlineKeyboard(keyboard)
   );
 }
@@ -845,11 +863,11 @@ async function showSelectedMatch(ctx, matchCode, edit = false) {
   const message = buildMatchMessage(match, totals);
   const keyboard = buildMatchKeyboard(match, totals);
 
-  if (edit && ctx.editMessageText) {
-    return ctx.editMessageText(message, keyboard);
+  if (edit) {
+    return editCallbackMessage(ctx, message, keyboard);
   }
 
-  return ctx.reply(message, keyboard);
+  return replyWithOptionalPhoto(ctx, WORLDCUP_IMAGE_URL, message, keyboard);
 }
 
 async function showOutcomeScores(ctx, matchCode, outcome, edit = false) {
@@ -863,11 +881,11 @@ async function showOutcomeScores(ctx, matchCode, outcome, edit = false) {
   const message = buildScoreMessage(match, totals, outcome);
   const keyboard = buildScoreKeyboard(match, outcome);
 
-  if (edit && ctx.editMessageText) {
-    return ctx.editMessageText(message, keyboard);
+  if (edit) {
+    return editCallbackMessage(ctx, message, keyboard);
   }
 
-  return ctx.reply(message, keyboard);
+  return replyWithOptionalPhoto(ctx, WORLDCUP_IMAGE_URL, message, keyboard);
 }
 
 async function getSelectionPool(matchCode, selection) {
@@ -885,6 +903,15 @@ async function getSelectionPool(matchCode, selection) {
   return (data || []).reduce((sum, order) => {
     return sum.plus(order.confirmed_amount || 0);
   }, new Decimal(0));
+}
+
+function buildAmountPrompt(match, selection, pool, prefix = "") {
+  const intro = prefix ? `${prefix}\n\n` : "";
+
+  return `${intro}Selection: ${formatSelectionWithFlags(match, selection)}
+Pool: ${formatAmount(pool)} ${match.currency}
+
+Please enter your UE voting amount.`;
 }
 
 async function handleAmountInput(ctx, text, session) {
@@ -944,9 +971,7 @@ async function handleAmountInput(ctx, text, session) {
 
   clearSession(ctx);
 
-  const pendingMessageText = `✅ Pending Order Created
-
-⚽️ Match: ${formatTeamWithFlag(match.team_a)} vs ${formatTeamWithFlag(match.team_b)}
+  const pendingMessageText = `⚽️ Match: ${formatTeamWithFlag(match.team_a)} vs ${formatTeamWithFlag(match.team_b)}
 
 🔸 Order ID: ${data.order_code}
 🔸 UID: ${data.ueex_uid}
@@ -1038,15 +1063,15 @@ async function confirmOrder(ctx, text) {
 
   await updateLiveMatchMessage(order.match_code);
 
-  const confirmedMessageText = `✅ Order Confirmed
-
-⚽️ Match: ${formatTeamWithFlag(matchData.team_a)} vs ${formatTeamWithFlag(matchData.team_b)}
+  const confirmedMessageText = `⚽️ Match: ${formatTeamWithFlag(matchData.team_a)} vs ${formatTeamWithFlag(matchData.team_b)}
 
 🔸 Order ID: ${orderCode}
 🔸 UID: ${order.ueex_uid}
 🔸 TG: ${getTelegramUserLabel(order)}
 🔸 Selection: ${formatSelectionWithFlags(matchData, order.selection)}
-🔸 Confirmed Amount: ${formatAmount(amount)} ${matchData.currency}`;
+🔸 Confirmed Amount: ${formatAmount(amount)} ${matchData.currency}
+
+📊 Send /myvote to view your vote details.`;
 
   return replyWithOptionalPhoto(
     ctx,
@@ -1441,16 +1466,18 @@ Admins will arrange reward distribution manually.`);
 }
 
 function getMatchResultDisplay(match) {
-  if (!match) return "未开始";
+  if (!match) return "Not Started";
 
   if (match.result) {
     return formatSelectionWithFlags(match, match.result);
   }
 
-  if (match.status === "locked") return "进行中";
-  if (match.status === "resulted" || match.status === "settled") return match.result ? formatSelectionWithFlags(match, match.result) : "进行中";
+  if (match.status === "locked") return "In Progress";
+  if (match.status === "resulted" || match.status === "settled") {
+    return match.result ? formatSelectionWithFlags(match, match.result) : "In Progress";
+  }
 
-  return "未开始";
+  return "Not Started";
 }
 
 async function getConfirmedOrdersForMatches(matchCodes) {
@@ -1570,8 +1597,8 @@ async function showMyVote(ctx) {
 🔸 Amount: ${formatAmount(amount)} ${order.currency}
 🔸 Total Pool: ${formatAmount(totalPool)} ${order.currency}
 🔸 Order Status: ${orderStatus}
-🔸 比赛赛果：${resultDisplay}
-🔸 总盈亏：${pnl}`;
+🔸 Game Result: ${resultDisplay}
+🔸 Total PnL: ${pnl}`;
   });
 
   return ctx.reply(`📊 My Votes
@@ -1693,8 +1720,9 @@ bot.on("callback_query", async (ctx) => {
       await deleteStoredPrompt(ctx);
       await ctx.answerCbQuery();
 
+      const selectionPool = await getSelectionPool(matchCode, selection);
       const prompt = await ctx.reply(
-        `Selection: ${formatSelectionWithFlags(match, selection)}\n\nPlease enter your expected ${match.currency} amount.`,
+        buildAmountPrompt(match, selection, selectionPool),
         {
           reply_markup: {
             force_reply: true,
@@ -1778,8 +1806,9 @@ bot.on("message", async (ctx) => {
       if (session.nextMatchCode && session.nextSelection) {
         const match = await getMatch(session.nextMatchCode);
 
+        const selectionPool = await getSelectionPool(session.nextMatchCode, session.nextSelection);
         const prompt = await ctx.reply(
-          `✅ UID confirmed: ${uid}\n\nSelection: ${formatSelectionWithFlags(match, session.nextSelection)}\n\nPlease enter your expected ${match.currency} amount.`,
+          buildAmountPrompt(match, session.nextSelection, selectionPool, `✅ UID confirmed: ${uid}`),
           {
             reply_markup: {
               force_reply: true,
