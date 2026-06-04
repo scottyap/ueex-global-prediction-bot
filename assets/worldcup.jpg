@@ -1,0 +1,7 @@
+await ctx.replyWithPhoto(
+  "https://ibb.co/7tB5qs19",
+  {
+    caption: message,
+    reply_markup: keyboard.reply_markup
+  }
+);
