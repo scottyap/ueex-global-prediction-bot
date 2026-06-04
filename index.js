@@ -580,17 +580,24 @@ function getBetNowUrl(matchCode) {
   return `https://t.me/${BOT_USERNAME}?start=bet_${matchCode}`;
 }
 
+function getPrivateMainMenu() {
+  return Markup.keyboard([
+    ["🎮 Game", "📊 My Vote"]
+  ]).resize();
+}
+
 function buildGroupMatchKeyboard(match) {
   const url = getBetNowUrl(match.match_code);
+  const label = `${formatTeamWithFlag(match.team_a)} vs ${formatTeamWithFlag(match.team_b)}`;
 
   if (url) {
     return Markup.inlineKeyboard([
-      [Markup.button.url("🎮 Vote Now", url)]
+      [Markup.button.url(label, url)]
     ]);
   }
 
   return Markup.inlineKeyboard([
-    [Markup.button.callback("🎮 Vote Now", `wcmatch:${match.match_code}`)]
+    [Markup.button.callback(label, `wcmatch:${match.match_code}`)]
   ]);
 }
 
@@ -890,7 +897,7 @@ async function showOpenMatches(ctx) {
 
   const keyboard = openMatches.map((match) => {
     const url = getBetNowUrl(match.match_code);
-    const label = `${formatTeamWithFlag(match.team_a)} vs ${formatTeamWithFlag(match.team_b)} | Vote Now`;
+    const label = `${formatTeamWithFlag(match.team_a)} vs ${formatTeamWithFlag(match.team_b)}`;
 
     if (url) {
       return [Markup.button.url(label, url)];
@@ -902,7 +909,7 @@ async function showOpenMatches(ctx) {
   return replyWithOptionalPhoto(
     ctx,
     WORLDCUP_IMAGE_URL,
-    "Open matches are available. Tap Vote Now to vote in private chat with the bot.",
+    "Open matches are available. Tap a match to vote in private chat with the bot.",
     Markup.inlineKeyboard(keyboard)
   );
 }
@@ -1088,7 +1095,10 @@ async function handleAmountInput(ctx, text, session) {
   const pendingMessage = await replyWithOptionalPhoto(
     ctx,
     PENDING_ORDER_IMAGE_URL,
-    pendingMessageText
+    pendingMessageText,
+    Markup.inlineKeyboard([
+      [Markup.button.callback("❌ Cancel", `wccancel:${data.order_code}`)]
+    ])
   );
 
   await supabase
@@ -1101,6 +1111,57 @@ async function handleAmountInput(ctx, text, session) {
     .eq("order_code", data.order_code);
 
   return pendingMessage;
+}
+
+async function cancelPendingOrder(ctx, orderCode) {
+  const normalizedOrderCode = String(orderCode || "").toUpperCase();
+
+  const { data: order, error: orderError } = await supabase
+    .from("wc_orders")
+    .select("*")
+    .eq("order_code", normalizedOrderCode)
+    .maybeSingle();
+
+  if (orderError || !order) {
+    return ctx.answerCbQuery("Order not found.", { show_alert: true });
+  }
+
+  if (Number(order.telegram_id) !== Number(ctx.from.id)) {
+    return ctx.answerCbQuery("You can only cancel your own order.", { show_alert: true });
+  }
+
+  if (order.status !== "pending") {
+    return ctx.answerCbQuery(`This order is already ${order.status}.`, { show_alert: true });
+  }
+
+  const { error } = await supabase
+    .from("wc_orders")
+    .update({
+      status: "voided",
+      voided_by: ctx.from.id,
+      voided_at: new Date().toISOString(),
+      updated_at: new Date().toISOString()
+    })
+    .eq("order_code", normalizedOrderCode);
+
+  if (error) {
+    return ctx.answerCbQuery(`Failed to cancel order: ${error.message}`, { show_alert: true });
+  }
+
+  await ctx.answerCbQuery("Order cancelled.");
+
+  const match = await getMatch(order.match_code);
+  const message = `❌ Order Cancelled
+
+⚽️ Match: ${match ? `${formatTeamWithFlag(match.team_a)} vs ${formatTeamWithFlag(match.team_b)}` : order.match_code}
+
+🔸 Order ID: ${order.order_code}
+🔸 UID: ${order.ueex_uid}
+🔸 TG: ${getTelegramUserLabel(order)}
+🔸 Selection: ${match ? formatSelectionWithFlags(match, order.selection) : order.selection}
+🔸 Amount: ${formatAmount(order.expected_amount)} ${order.currency}`;
+
+  return editCallbackMessage(ctx, message);
 }
 
 async function confirmOrderByCode(ctx, orderCode, amount, options = {}) {
@@ -1744,6 +1805,57 @@ async function showMyVote(ctx) {
 ${lines.join("\n\n")}`);
 }
 
+async function showPendingOrders(ctx, matchCode = null) {
+  if (!(await requireAdmin(ctx))) return;
+
+  let query = supabase
+    .from("wc_orders")
+    .select("*")
+    .eq("status", "pending")
+    .order("created_at", { ascending: false })
+    .limit(30);
+
+  if (matchCode) {
+    query = query.eq("match_code", String(matchCode).toUpperCase());
+  }
+
+  const { data: orders, error } = await query;
+
+  if (error) {
+    return ctx.reply(`Failed to load pending orders: ${error.message}`);
+  }
+
+  if (!orders || orders.length === 0) {
+    return ctx.reply(matchCode ? `No pending orders for ${String(matchCode).toUpperCase()}.` : "No pending orders.");
+  }
+
+  const matchCodes = [...new Set(orders.map((order) => order.match_code))];
+  const { data: matches } = await supabase
+    .from("wc_matches")
+    .select("*")
+    .in("match_code", matchCodes);
+
+  const matchMap = new Map((matches || []).map((match) => [match.match_code, match]));
+
+  const lines = orders.map((order, index) => {
+    const match = matchMap.get(order.match_code);
+    const matchLabel = match ? `${formatTeamWithFlag(match.team_a)} vs ${formatTeamWithFlag(match.team_b)}` : order.match_code;
+    const selection = match ? formatSelectionWithFlags(match, order.selection) : order.selection;
+
+    return `${index + 1}. ${order.order_code}
+Match: ${matchLabel}
+UID: ${order.ueex_uid}
+TG: ${getTelegramUserLabel(order)}
+Selection: ${selection}
+Amount: ${formatAmount(order.expected_amount)} ${order.currency}
+Confirm: /confirm_${order.order_code}_${formatAmount(order.expected_amount)}`;
+  });
+
+  return ctx.reply(`🧾 Pending Orders${matchCode ? ` | ${String(matchCode).toUpperCase()}` : ""}
+
+${lines.join("\n\n")}`);
+}
+
 async function showAdminHelp(ctx) {
   const text = `⚽ UEEx World Cup Bot Commands
 
@@ -1760,6 +1872,8 @@ Admin:
 /result_WC0001_0:0 - Record result
 /preview_WC0001 - Generate settlement preview
 /settle_WC0001 - Publish settlement
+/pending - View latest pending orders
+/pending_WC0001 - View pending orders for a match
 /chatid - Check chat ID
 /ping - Test bot`;
 
@@ -1770,9 +1884,17 @@ bot.start(async (ctx) => {
   const text = getMessageText(ctx);
   const payload = text.split(/\s+/)[1] || "";
 
+  if (isPrivateChat(ctx)) {
+    await ctx.reply("UEEx World Cup Bot is running. Use the buttons below anytime.", getPrivateMainMenu());
+  }
+
   if (payload.startsWith("bet_")) {
     const matchCode = payload.replace(/^bet_/i, "").toUpperCase();
     return startPrivateBet(ctx, matchCode);
+  }
+
+  if (isPrivateChat(ctx)) {
+    return showOpenMatches(ctx);
   }
 
   return ctx.reply("UEEx World Cup Bot is running. Send /worldcup to view open matches.");
@@ -1795,6 +1917,15 @@ bot.command("worldcup", async (ctx) => {
     await showWorldCupEntry(ctx);
   } catch (error) {
     console.error("Worldcup command error:", error);
+    await ctx.reply(`Error: ${error.message}`);
+  }
+});
+
+bot.command("pending", async (ctx) => {
+  try {
+    await showPendingOrders(ctx);
+  } catch (error) {
+    console.error("Pending command error:", error);
     await ctx.reply(`Error: ${error.message}`);
   }
 });
@@ -1834,7 +1965,7 @@ bot.on("callback_query", async (ctx) => {
       if (!isPrivateChat(ctx)) {
         const url = getBetNowUrl(matchCode);
         return ctx.answerCbQuery(
-          url ? "Please tap Vote Now to open private chat with the bot." : "Please set BOT_USERNAME in Render to enable private betting.",
+          url ? "Please tap Bet Now to open private chat with the bot." : "Please set BOT_USERNAME in Render to enable private betting.",
           { show_alert: true }
         );
       }
@@ -1851,6 +1982,11 @@ bot.on("callback_query", async (ctx) => {
       const [, matchCode, outcome] = data.split(":");
       await ctx.answerCbQuery();
       return showOutcomeScores(ctx, matchCode, outcome, true);
+    }
+
+    if (data.startsWith("wccancel:")) {
+      const orderCode = data.split(":")[1];
+      return cancelPendingOrder(ctx, orderCode);
     }
 
     if (data.startsWith("wcsel:")) {
@@ -1970,6 +2106,21 @@ bot.on("message", async (ctx) => {
 
     if (/^\/settle_/i.test(cleaned)) {
       return settleMatch(ctx, cleaned);
+    }
+
+    if (/^\/pending(?:_(WC[A-Z0-9]+))?$/i.test(cleaned)) {
+      const pendingMatch = cleaned.match(/^\/pending(?:_(WC[A-Z0-9]+))?$/i);
+      return showPendingOrders(ctx, pendingMatch?.[1] || null);
+    }
+
+    if (isPrivateChat(ctx) && ["🎮 Game", "Game", "game"].includes(cleaned)) {
+      clearSession(ctx);
+      return showOpenMatches(ctx);
+    }
+
+    if (isPrivateChat(ctx) && ["📊 My Vote", "My Vote", "my vote", "My Votes", "my votes"].includes(cleaned)) {
+      clearSession(ctx);
+      return showMyVote(ctx);
     }
 
     if (cleaned.startsWith("/")) return;
