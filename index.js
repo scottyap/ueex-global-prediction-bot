@@ -907,8 +907,8 @@ async function getSelectionPool(matchCode, selection) {
 function buildAmountPrompt(match, selection, pool, prefix = "") {
   const intro = prefix ? `${prefix}\n\n` : "";
 
-  return `${intro}Selection: ${formatSelectionWithFlags(match, selection)}
-Pool: ${formatAmount(pool)} ${match.currency}
+  return `${intro}🔸 Selection: ${formatSelectionWithFlags(match, selection)}
+🔸 Pool: ${formatAmount(pool)} ${match.currency}
 
 Please enter your UE voting amount.`;
 }
