@@ -20,6 +20,14 @@ const DEFAULT_CURRENCY = process.env.DEFAULT_CURRENCY || "UE";
 const PLATFORM_FEE_BPS = Number(process.env.PLATFORM_FEE_BPS || 500);
 const MAX_OPEN_MATCHES_SHOWN = Number(process.env.MAX_OPEN_MATCHES_SHOWN || 20);
 const LIVE_UPDATE_INTERVAL_MS = Number(process.env.LIVE_UPDATE_INTERVAL_MS || 30000);
+const MIN_BET_AMOUNT = new Decimal(process.env.MIN_BET_AMOUNT || 1000);
+const BOT_USERNAME = (process.env.BOT_USERNAME || "").replace(/^@/, "");
+const AUTO_CONFIRM_ENABLED = String(process.env.AUTO_CONFIRM_ENABLED || "false").toLowerCase() === "true";
+const PAYMENT_CHECK_INTERVAL_MS = Number(process.env.PAYMENT_CHECK_INTERVAL_MS || 30000);
+const UEEX_PAYMENT_ITEM_ID = Number(process.env.UEEX_PAYMENT_ITEM_ID || 1304);
+const UEEX_RECEIVER_UID = process.env.UEEX_RECEIVER_UID || RECEIVER_UID;
+const UEEX_INTERNAL_EXCHANGE_TYPE = Number(process.env.UEEX_INTERNAL_EXCHANGE_TYPE || 1);
+const UEEX_SUCCESS_STATUS = process.env.UEEX_SUCCESS_STATUS || "success";
 const WORLDCUP_IMAGE_URL = process.env.WORLDCUP_IMAGE_URL || "";
 const PENDING_ORDER_IMAGE_URL = process.env.PENDING_ORDER_IMAGE_URL || "";
 const ORDER_CONFIRMED_IMAGE_URL = process.env.ORDER_CONFIRMED_IMAGE_URL || "";
@@ -66,6 +74,10 @@ function clearSession(ctx) {
 
 function isGroupChat(ctx) {
   return ctx.chat?.type === "group" || ctx.chat?.type === "supergroup";
+}
+
+function isPrivateChat(ctx) {
+  return ctx.chat?.type === "private";
 }
 
 function getMessageText(ctx) {
@@ -513,6 +525,21 @@ async function getOpenMatches(chatId) {
   return data || [];
 }
 
+async function getAllOpenMatches() {
+  const { data, error } = await supabase
+    .from("wc_matches")
+    .select("*")
+    .eq("status", "open")
+    .order("created_at", { ascending: false })
+    .limit(MAX_OPEN_MATCHES_SHOWN);
+
+  if (error) {
+    throw new Error(`Failed to load matches: ${error.message}`);
+  }
+
+  return data || [];
+}
+
 async function getMatchTotals(matchCode, match = null) {
   const matchData = match || (await getMatch(matchCode));
   const options = getSelectionOptions(matchData);
@@ -548,7 +575,26 @@ function getTotalPool(totals) {
   return Object.values(totals).reduce((sum, amount) => sum.plus(amount), new Decimal(0));
 }
 
-function buildMatchKeyboard(match, totals) {
+function getBetNowUrl(matchCode) {
+  if (!BOT_USERNAME) return null;
+  return `https://t.me/${BOT_USERNAME}?start=bet_${matchCode}`;
+}
+
+function buildGroupMatchKeyboard(match) {
+  const url = getBetNowUrl(match.match_code);
+
+  if (url) {
+    return Markup.inlineKeyboard([
+      [Markup.button.url("🎮 Vote Now", url)]
+    ]);
+  }
+
+  return Markup.inlineKeyboard([
+    [Markup.button.callback("🎮 Vote Now", `wcmatch:${match.match_code}`)]
+  ]);
+}
+
+function buildOutcomeKeyboard(match, totals) {
   return Markup.inlineKeyboard([
     [Markup.button.callback(getOutcomeCallbackLabel(match, "A", totals), `wcoutcome:${match.match_code}:A`)],
     [Markup.button.callback(getOutcomeCallbackLabel(match, "DRAW", totals), `wcoutcome:${match.match_code}:DRAW`)],
@@ -584,6 +630,7 @@ function buildScoreMessage(match, totals, outcome) {
 🔸 Match: ${formatTeamWithFlag(match.team_a)} vs ${formatTeamWithFlag(match.team_b)}
 🔸 Status: ${statusText}
 🔸 Betting Time Left: ${formatTimeLeft(match.betting_end_at)}
+
 🔸 Selection Type: ${getOutcomeLabel(match, outcome)}
 🔸 Selection Pool: ${formatAmount(outcomePool)} ${match.currency}
 
@@ -624,6 +671,18 @@ async function replyWithOptionalPhoto(ctx, imageUrl, text, keyboard = null) {
   }
 
   return ctx.reply(text);
+}
+
+async function sendOptionalPhoto(chatId, imageUrl, text, keyboard = null) {
+  if (imageUrl) {
+    return bot.telegram.sendPhoto(chatId, imageUrl, buildPhotoExtra(text, keyboard));
+  }
+
+  if (keyboard?.reply_markup) {
+    return bot.telegram.sendMessage(chatId, text, { reply_markup: keyboard.reply_markup });
+  }
+
+  return bot.telegram.sendMessage(chatId, text);
 }
 
 async function editLiveMessage(chatId, messageId, imageUrl, text, keyboard = null) {
@@ -674,7 +733,7 @@ async function updateLiveMatchMessage(matchCode) {
       match.live_message_id,
       WORLDCUP_IMAGE_URL,
       buildMatchMessage(match, totals),
-      buildMatchKeyboard(match, totals)
+      buildGroupMatchKeyboard(match)
     );
   } catch (error) {
     if (!String(error.message || "").includes("message is not modified")) {
@@ -787,7 +846,7 @@ async function createMatch(ctx, text) {
     ctx,
     WORLDCUP_IMAGE_URL,
     buildMatchMessage(data, totals),
-    buildMatchKeyboard(data, totals)
+    buildGroupMatchKeyboard(data)
   );
 
   await supabase
@@ -802,8 +861,65 @@ async function createMatch(ctx, text) {
 }
 
 async function showWorldCupEntry(ctx) {
-  if (!isGroupChat(ctx)) {
-    return ctx.reply("Please use /worldcup inside the official Telegram group.");
+  return showOpenMatches(ctx);
+}
+
+async function showOpenMatches(ctx) {
+  const matches = isPrivateChat(ctx) ? await getAllOpenMatches() : await getOpenMatches(ctx.chat.id);
+  const openMatches = matches.filter(isBettingOpen);
+
+  if (!openMatches.length) {
+    return ctx.reply("No open World Cup prediction matches are available now.");
+  }
+
+  if (isPrivateChat(ctx)) {
+    const keyboard = openMatches.map((match) => [
+      Markup.button.callback(
+        `${formatTeamWithFlag(match.team_a)} vs ${formatTeamWithFlag(match.team_b)} (${match.match_code})`,
+        `wcmatch:${match.match_code}`
+      )
+    ]);
+
+    return replyWithOptionalPhoto(
+      ctx,
+      WORLDCUP_IMAGE_URL,
+      "Please select a match:",
+      Markup.inlineKeyboard(keyboard)
+    );
+  }
+
+  const keyboard = openMatches.map((match) => {
+    const url = getBetNowUrl(match.match_code);
+    const label = `${formatTeamWithFlag(match.team_a)} vs ${formatTeamWithFlag(match.team_b)} | Vote Now`;
+
+    if (url) {
+      return [Markup.button.url(label, url)];
+    }
+
+    return [Markup.button.callback(label, `wcmatch:${match.match_code}`)];
+  });
+
+  return replyWithOptionalPhoto(
+    ctx,
+    WORLDCUP_IMAGE_URL,
+    "Open matches are available. Tap Vote Now to vote in private chat with the bot.",
+    Markup.inlineKeyboard(keyboard)
+  );
+}
+
+async function startPrivateBet(ctx, matchCode) {
+  if (!isPrivateChat(ctx)) {
+    return ctx.reply("Please open private chat with the bot to vote.");
+  }
+
+  const match = await getMatch(matchCode);
+
+  if (!match) {
+    return ctx.reply("Match not found.");
+  }
+
+  if (!isBettingOpen(match)) {
+    return ctx.reply("Betting for this match is already closed.");
   }
 
   const user = await getUserByTelegramId(ctx.from.id);
@@ -811,44 +927,23 @@ async function showWorldCupEntry(ctx) {
   if (!user) {
     await deleteStoredPrompt(ctx);
 
-    const prompt = await ctx.reply(
-      `Please enter your UEEx UID.`,
-      {
-        reply_markup: {
-          force_reply: true,
-          selective: true
-        }
+    const prompt = await ctx.reply("Please enter your UEEx UID.", {
+      reply_markup: {
+        force_reply: true,
+        selective: true
       }
-    );
+    });
 
-    setSession(ctx, { step: "awaiting_uid", promptMessageId: prompt.message_id });
+    setSession(ctx, {
+      step: "awaiting_uid",
+      nextMatchCode: matchCode,
+      promptMessageId: prompt.message_id
+    });
+
     return;
   }
 
-  return showOpenMatches(ctx);
-}
-
-async function showOpenMatches(ctx) {
-  const matches = await getOpenMatches(ctx.chat.id);
-  const openMatches = matches.filter(isBettingOpen);
-
-  if (!openMatches.length) {
-    return ctx.reply("No open World Cup prediction matches are available now.");
-  }
-
-  const keyboard = openMatches.map((match) => [
-    Markup.button.callback(
-      `${formatTeamWithFlag(match.team_a)} vs ${formatTeamWithFlag(match.team_b)} (${match.match_code})`,
-      `wcmatch:${match.match_code}`
-    )
-  ]);
-
-  return replyWithOptionalPhoto(
-    ctx,
-    WORLDCUP_IMAGE_URL,
-    "Please select a match:",
-    Markup.inlineKeyboard(keyboard)
-  );
+  return showSelectedMatch(ctx, matchCode);
 }
 
 async function showSelectedMatch(ctx, matchCode, edit = false) {
@@ -860,7 +955,7 @@ async function showSelectedMatch(ctx, matchCode, edit = false) {
 
   const totals = await getMatchTotals(matchCode, match);
   const message = buildMatchMessage(match, totals);
-  const keyboard = buildMatchKeyboard(match, totals);
+  const keyboard = buildOutcomeKeyboard(match, totals);
 
   if (edit) {
     return editCallbackMessage(ctx, message, keyboard);
@@ -905,19 +1000,24 @@ async function getSelectionPool(matchCode, selection) {
 }
 
 function buildAmountPrompt(match, selection, pool, prefix = "") {
-  const intro = prefix ? `${prefix}\n\n` : "";
+  const intro = prefix ? `${prefix}
 
-  return `${intro}🔸 Selection: ${formatSelectionWithFlags(match, selection)}
-🔸 Pool: ${formatAmount(pool)} ${match.currency}
+` : "";
 
-Please enter your UE voting amount.`;
+  return `${intro}Selection: ${formatSelectionWithFlags(match, selection)}
+Pool: ${formatAmount(pool)} ${match.currency}
+
+Please enter your UE voting amount. Minimum: ${formatAmount(MIN_BET_AMOUNT)} ${match.currency}.`;
 }
-
 async function handleAmountInput(ctx, text, session) {
   const amount = parsePositiveAmount(text);
 
   if (!amount) {
-    return ctx.reply("Invalid amount. Please enter a positive UE amount, for example: 100 or 1150.5");
+    return ctx.reply("Invalid amount. Please enter a positive UE amount, for example: 1000 or 1150.5");
+  }
+
+  if (amount.lt(MIN_BET_AMOUNT)) {
+    return ctx.reply(`Minimum voting amount is ${formatAmount(MIN_BET_AMOUNT)} UE.`);
   }
 
   const match = await getMatch(session.matchCode);
@@ -954,6 +1054,7 @@ async function handleAmountInput(ctx, text, session) {
     confirmed_amount: 0,
     currency: match.currency,
     status: "pending",
+    payment_remark: orderCode,
     updated_at: new Date().toISOString()
   };
 
@@ -968,6 +1069,7 @@ async function handleAmountInput(ctx, text, session) {
     return ctx.reply(`Failed to create pending order: ${error.message}`);
   }
 
+  await deleteStoredPrompt(ctx);
   clearSession(ctx);
 
   const pendingMessageText = `⚽️ Match: ${formatTeamWithFlag(match.team_a)} vs ${formatTeamWithFlag(match.team_b)}
@@ -979,8 +1081,9 @@ async function handleAmountInput(ctx, text, session) {
 🔸 Amount: ${formatAmount(amount)} ${match.currency}
 
 ❗️Please transfer ${formatAmount(amount)} ${match.currency} via UEEx internal transfer to UID ${match.receiver_uid}.
-❗️Your vote will only be counted after admin confirmation.
-❗️Admin confirmation command: /confirm_${data.order_code}_${formatAmount(amount)}`;
+❗️Transfer Remark: ${data.order_code}
+❗️Your vote will be counted after payment confirmation.
+❗️Admin backup command: /confirm_${data.order_code}_${formatAmount(amount)}`;
 
   const pendingMessage = await replyWithOptionalPhoto(
     ctx,
@@ -1000,22 +1103,8 @@ async function handleAmountInput(ctx, text, session) {
   return pendingMessage;
 }
 
-async function confirmOrder(ctx, text) {
-  if (!(await requireAdmin(ctx))) return;
-
-  const cleaned = cleanCommandText(text);
-  const match = cleaned.match(/^\/confirm_([A-Z0-9]+)_([0-9]+(?:\.[0-9]{1,8})?)$/i);
-
-  if (!match) {
-    return ctx.reply("Invalid format.\nExample: /confirm_O000123_1150");
-  }
-
-  const orderCode = match[1].toUpperCase();
-  const amount = parsePositiveAmount(match[2]);
-
-  if (!amount) {
-    return ctx.reply("Invalid amount.");
-  }
+async function confirmOrderByCode(ctx, orderCode, amount, options = {}) {
+  const { autoConfirmed = false } = options;
 
   const { data: order, error: orderError } = await supabase
     .from("wc_orders")
@@ -1042,8 +1131,10 @@ async function confirmOrder(ctx, text) {
     .update({
       confirmed_amount: amount.toFixed(),
       status: "confirmed",
-      confirmed_by: ctx.from.id,
+      confirmed_by: ctx.from?.id || null,
       confirmed_at: new Date().toISOString(),
+      auto_confirmed: autoConfirmed,
+      payment_checked_at: new Date().toISOString(),
       updated_at: new Date().toISOString()
     })
     .eq("order_code", orderCode);
@@ -1072,11 +1163,59 @@ async function confirmOrder(ctx, text) {
 
 📊 Send /myvote to view your vote details.`;
 
-  return replyWithOptionalPhoto(
-    ctx,
-    ORDER_CONFIRMED_IMAGE_URL,
-    confirmedMessageText
-  );
+  let userNotified = true;
+
+  try {
+    await sendOptionalPhoto(order.telegram_id, ORDER_CONFIRMED_IMAGE_URL, confirmedMessageText);
+  } catch (error) {
+    userNotified = false;
+    console.error("Failed to notify user after confirmation:", error.message);
+  }
+
+  return ctx.reply(`✅ Order confirmed: ${orderCode}
+UID: ${order.ueex_uid}
+Amount: ${formatAmount(amount)} ${matchData.currency}
+User notified: ${userNotified ? "yes" : "no"}`);
+}
+
+async function confirmOrder(ctx, text) {
+  if (!(await requireAdmin(ctx))) return;
+
+  const cleaned = cleanCommandText(text);
+  const match = cleaned.match(/^\/confirm_([A-Z0-9]+)_([0-9]+(?:\.[0-9]{1,8})?)$/i);
+
+  if (!match) {
+    return ctx.reply("Invalid format.\nExample: /confirm_O000123_1150");
+  }
+
+  const orderCode = match[1].toUpperCase();
+  const amount = parsePositiveAmount(match[2]);
+
+  if (!amount) {
+    return ctx.reply("Invalid amount.");
+  }
+
+  return confirmOrderByCode(ctx, orderCode, amount);
+}
+
+async function mockPayOrder(ctx, text) {
+  if (!(await requireAdmin(ctx))) return;
+
+  const cleaned = cleanCommandText(text);
+  const match = cleaned.match(/^\/mockpay_([A-Z0-9]+)_([0-9]+(?:\.[0-9]{1,8})?)$/i);
+
+  if (!match) {
+    return ctx.reply("Invalid format.\nExample: /mockpay_O000123_1150");
+  }
+
+  const orderCode = match[1].toUpperCase();
+  const amount = parsePositiveAmount(match[2]);
+
+  if (!amount) {
+    return ctx.reply("Invalid amount.");
+  }
+
+  return confirmOrderByCode(ctx, orderCode, amount, { autoConfirmed: true });
 }
 
 async function voidOrder(ctx, text) {
@@ -1615,6 +1754,7 @@ User:
 Admin:
 /worldcup_FRA_BRA_1_1_20_0:0_3:3_Others - Create match
 /confirm_O000123_1150 - Confirm payment
+/mockpay_O000123_1150 - Mock auto payment test
 /void_O000123 - Void order
 /lock_WC0001 - Lock match
 /result_WC0001_0:0 - Record result
@@ -1627,7 +1767,15 @@ Admin:
 }
 
 bot.start(async (ctx) => {
-  await ctx.reply("UEEx World Cup Bot is running. Send /worldcup in the group to join.");
+  const text = getMessageText(ctx);
+  const payload = text.split(/\s+/)[1] || "";
+
+  if (payload.startsWith("bet_")) {
+    const matchCode = payload.replace(/^bet_/i, "").toUpperCase();
+    return startPrivateBet(ctx, matchCode);
+  }
+
+  return ctx.reply("UEEx World Cup Bot is running. Send /worldcup to view open matches.");
 });
 
 bot.command("ping", async (ctx) => {
@@ -1653,6 +1801,22 @@ bot.command("worldcup", async (ctx) => {
 
 bot.command("myvote", async (ctx) => {
   try {
+    if (!isPrivateChat(ctx)) {
+      const url = BOT_USERNAME ? `https://t.me/${BOT_USERNAME}` : null;
+      const keyboard = url ? Markup.inlineKeyboard([[Markup.button.url("Open Bot", url)]]) : undefined;
+      const msg = await ctx.reply("Please check your vote details in private chat with the bot.", keyboard);
+
+      if (ctx.chat?.id && ctx.message?.message_id) {
+        scheduleDeleteMessage(ctx.chat.id, ctx.message.message_id, 10000);
+      }
+
+      if (ctx.chat?.id && msg?.message_id) {
+        scheduleDeleteMessage(ctx.chat.id, msg.message_id, 10000);
+      }
+
+      return;
+    }
+
     await showMyVote(ctx);
   } catch (error) {
     console.error("Myvote error:", error);
@@ -1666,17 +1830,34 @@ bot.on("callback_query", async (ctx) => {
 
     if (data.startsWith("wcmatch:")) {
       const matchCode = data.split(":")[1];
+
+      if (!isPrivateChat(ctx)) {
+        const url = getBetNowUrl(matchCode);
+        return ctx.answerCbQuery(
+          url ? "Please tap Vote Now to open private chat with the bot." : "Please set BOT_USERNAME in Render to enable private betting.",
+          { show_alert: true }
+        );
+      }
+
       await ctx.answerCbQuery();
       return showSelectedMatch(ctx, matchCode, true);
     }
 
     if (data.startsWith("wcoutcome:")) {
+      if (!isPrivateChat(ctx)) {
+        return ctx.answerCbQuery("Please vote in private chat with the bot.", { show_alert: true });
+      }
+
       const [, matchCode, outcome] = data.split(":");
       await ctx.answerCbQuery();
       return showOutcomeScores(ctx, matchCode, outcome, true);
     }
 
     if (data.startsWith("wcsel:")) {
+      if (!isPrivateChat(ctx)) {
+        return ctx.answerCbQuery("Please vote in private chat with the bot.", { show_alert: true });
+      }
+
       const parts = data.split(":");
       const matchCode = parts[1];
       const selection = parts.slice(2).join(":");
@@ -1767,6 +1948,10 @@ bot.on("message", async (ctx) => {
       return confirmOrder(ctx, cleaned);
     }
 
+    if (/^\/mockpay_/i.test(cleaned)) {
+      return mockPayOrder(ctx, cleaned);
+    }
+
     if (/^\/void_/i.test(cleaned)) {
       return voidOrder(ctx, cleaned);
     }
@@ -1826,6 +2011,13 @@ bot.on("message", async (ctx) => {
         return;
       }
 
+      if (session.nextMatchCode) {
+        const nextMatchCode = session.nextMatchCode;
+        clearSession(ctx);
+        await ctx.reply(`✅ UID confirmed: ${uid}`);
+        return showSelectedMatch(ctx, nextMatchCode);
+      }
+
       clearSession(ctx);
       await ctx.reply(`✅ UID confirmed: ${uid}`);
       return showOpenMatches(ctx);
@@ -1880,6 +2072,7 @@ app.listen(PORT, async () => {
 
     startLiveMatchUpdater();
     console.log(`Live match updater interval: ${LIVE_UPDATE_INTERVAL_MS} ms`);
+    console.log(`Auto confirmation enabled: ${AUTO_CONFIRM_ENABLED ? "ON" : "OFF"}; interval: ${PAYMENT_CHECK_INTERVAL_MS} ms; item_id: ${UEEX_PAYMENT_ITEM_ID}; receiver_uid: ${UEEX_RECEIVER_UID}; internal_exchange_type: ${UEEX_INTERNAL_EXCHANGE_TYPE}; success_status: ${UEEX_SUCCESS_STATUS}`);
   } catch (error) {
     console.error("Startup error:", error);
   }
