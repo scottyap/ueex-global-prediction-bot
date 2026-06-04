@@ -31,6 +31,7 @@ const UEEX_SUCCESS_STATUS = process.env.UEEX_SUCCESS_STATUS || "success";
 const WORLDCUP_IMAGE_URL = process.env.WORLDCUP_IMAGE_URL || "";
 const PENDING_ORDER_IMAGE_URL = process.env.PENDING_ORDER_IMAGE_URL || "";
 const ORDER_CONFIRMED_IMAGE_URL = process.env.ORDER_CONFIRMED_IMAGE_URL || "";
+const ADMIN_GROUP_CHAT_ID = process.env.ADMIN_GROUP_CHAT_ID || "";
 
 const ADMIN_USER_IDS = (process.env.ADMIN_USER_IDS || "")
   .split(",")
@@ -80,6 +81,14 @@ function isPrivateChat(ctx) {
   return ctx.chat?.type === "private";
 }
 
+function isAdminGroupChat(ctx) {
+  return Boolean(ADMIN_GROUP_CHAT_ID) && String(ctx.chat?.id || "") === String(ADMIN_GROUP_CHAT_ID);
+}
+
+function isAdminControlChat(ctx) {
+  return isPrivateChat(ctx) || isAdminGroupChat(ctx);
+}
+
 function getMessageText(ctx) {
   return ctx.message?.text || ctx.message?.caption || "";
 }
@@ -118,6 +127,7 @@ function isAdminId(userId) {
 
 async function isAdminUser(ctx) {
   if (isAdminId(ctx.from?.id)) return true;
+  if (isAdminGroupChat(ctx)) return true;
 
   if (!isGroupChat(ctx)) {
     return isAdminId(ctx.from?.id);
@@ -150,6 +160,41 @@ async function requireAdmin(ctx) {
   }
 
   return true;
+}
+
+async function requireAdminControlChat(ctx) {
+  if (!(await requireAdmin(ctx))) return false;
+
+  if (isAdminControlChat(ctx)) return true;
+
+  const warning = await ctx.reply("Please use this command in the admin group.");
+
+  if (ctx.chat?.id && ctx.message?.message_id) {
+    scheduleDeleteMessage(ctx.chat.id, ctx.message.message_id, 10000);
+  }
+
+  if (ctx.chat?.id && warning?.message_id) {
+    scheduleDeleteMessage(ctx.chat.id, warning.message_id, 10000);
+  }
+
+  return false;
+}
+
+async function notifyAdminGroup(text, ctx = null) {
+  if (!ADMIN_GROUP_CHAT_ID) return null;
+
+  if (ctx && String(ctx.chat?.id || "") === String(ADMIN_GROUP_CHAT_ID)) {
+    return null;
+  }
+
+  try {
+    return await bot.telegram.sendMessage(ADMIN_GROUP_CHAT_ID, text, {
+      disable_web_page_preview: true
+    });
+  } catch (error) {
+    console.error("Failed to notify admin group:", error.message);
+    return null;
+  }
 }
 
 function normalizeTeam(team) {
@@ -1110,6 +1155,23 @@ async function handleAmountInput(ctx, text, session) {
     })
     .eq("order_code", data.order_code);
 
+  await notifyAdminGroup(`🕐 New Pending Order
+
+⚽️ Match: ${formatTeamWithFlag(match.team_a)} vs ${formatTeamWithFlag(match.team_b)}
+
+🔸 Order ID: ${data.order_code}
+🔸 UID: ${data.ueex_uid}
+🔸 TG: ${getTelegramUserLabel(data)}
+🔸 Selection: ${formatSelectionWithFlags(match, data.selection)}
+🔸 Amount: ${formatAmount(amount)} ${match.currency}
+🔸 Remark: ${data.order_code}
+
+Confirm:
+/confirm_${data.order_code}_${formatAmount(amount)}
+
+Void:
+/void_${data.order_code}`);
+
   return pendingMessage;
 }
 
@@ -1160,6 +1222,16 @@ async function cancelPendingOrder(ctx, orderCode) {
 🔸 TG: ${getTelegramUserLabel(order)}
 🔸 Selection: ${match ? formatSelectionWithFlags(match, order.selection) : order.selection}
 🔸 Amount: ${formatAmount(order.expected_amount)} ${order.currency}`;
+
+  await notifyAdminGroup(`❌ Pending Order Cancelled
+
+⚽️ Match: ${match ? `${formatTeamWithFlag(match.team_a)} vs ${formatTeamWithFlag(match.team_b)}` : order.match_code}
+
+🔸 Order ID: ${order.order_code}
+🔸 UID: ${order.ueex_uid}
+🔸 TG: ${getTelegramUserLabel(order)}
+🔸 Selection: ${match ? formatSelectionWithFlags(match, order.selection) : order.selection}
+🔸 Amount: ${formatAmount(order.expected_amount)} ${order.currency}`);
 
   return editCallbackMessage(ctx, message);
 }
@@ -1232,6 +1304,17 @@ async function confirmOrderByCode(ctx, orderCode, amount, options = {}) {
     userNotified = false;
     console.error("Failed to notify user after confirmation:", error.message);
   }
+
+  await notifyAdminGroup(`✅ Order Confirmed
+
+⚽️ Match: ${formatTeamWithFlag(matchData.team_a)} vs ${formatTeamWithFlag(matchData.team_b)}
+
+🔸 Order ID: ${orderCode}
+🔸 UID: ${order.ueex_uid}
+🔸 TG: ${getTelegramUserLabel(order)}
+🔸 Selection: ${formatSelectionWithFlags(matchData, order.selection)}
+🔸 Confirmed Amount: ${formatAmount(amount)} ${matchData.currency}
+🔸 User Notified: ${userNotified ? "yes" : "no"}`, ctx);
 
   return ctx.reply(`✅ Order confirmed: ${orderCode}
 UID: ${order.ueex_uid}
@@ -1806,7 +1889,7 @@ ${lines.join("\n\n")}`);
 }
 
 async function showPendingOrders(ctx, matchCode = null) {
-  if (!(await requireAdmin(ctx))) return;
+  if (!(await requireAdminControlChat(ctx))) return;
 
   let query = supabase
     .from("wc_orders")
@@ -1872,7 +1955,7 @@ Admin:
 /result_WC0001_0:0 - Record result
 /preview_WC0001 - Generate settlement preview
 /settle_WC0001 - Publish settlement
-/pending - View latest pending orders
+/pending - View latest pending orders in admin group/private
 /pending_WC0001 - View pending orders for a match
 /chatid - Check chat ID
 /ping - Test bot`;
@@ -2081,30 +2164,37 @@ bot.on("message", async (ctx) => {
     }
 
     if (/^\/confirm_/i.test(cleaned)) {
+      if (!(await requireAdminControlChat(ctx))) return;
       return confirmOrder(ctx, cleaned);
     }
 
     if (/^\/mockpay_/i.test(cleaned)) {
+      if (!(await requireAdminControlChat(ctx))) return;
       return mockPayOrder(ctx, cleaned);
     }
 
     if (/^\/void_/i.test(cleaned)) {
+      if (!(await requireAdminControlChat(ctx))) return;
       return voidOrder(ctx, cleaned);
     }
 
     if (/^\/lock_/i.test(cleaned)) {
+      if (!(await requireAdminControlChat(ctx))) return;
       return lockMatch(ctx, cleaned);
     }
 
     if (/^\/result_/i.test(cleaned)) {
+      if (!(await requireAdminControlChat(ctx))) return;
       return setMatchResult(ctx, cleaned);
     }
 
     if (/^\/preview_/i.test(cleaned)) {
+      if (!(await requireAdminControlChat(ctx))) return;
       return previewSettlement(ctx, cleaned);
     }
 
     if (/^\/settle_/i.test(cleaned)) {
+      if (!(await requireAdminControlChat(ctx))) return;
       return settleMatch(ctx, cleaned);
     }
 
