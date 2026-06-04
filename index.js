@@ -177,7 +177,29 @@ function getTelegramUserLabel(userLike) {
 }
 
 function formatSelectionWithFlags(match, selection) {
-  return `${getTeamFlag(match.team_a)} ${labelForSelection(match, selection)} ${getTeamFlag(match.team_b)}`;
+  const raw = String(selection || "").trim();
+  const upper = raw.toUpperCase();
+  const teamAFlag = getTeamFlag(match.team_a);
+  const teamBFlag = getTeamFlag(match.team_b);
+
+  if (upper === "A_OTHER") {
+    return `${teamAFlag} Other ${match.team_a} Win ${teamBFlag}`;
+  }
+
+  if (upper === "DRAW_OTHER") {
+    return `${teamAFlag} Other Draw ${teamBFlag}`;
+  }
+
+  if (upper === "B_OTHER") {
+    return `${teamAFlag} Other ${match.team_b} Win ${teamBFlag}`;
+  }
+
+  const score = parseScoreValue(raw);
+  if (score) {
+    return `${teamAFlag} ${score.text} ${teamBFlag}`;
+  }
+
+  return `${teamAFlag} ${labelForSelection(match, selection)} ${teamBFlag}`;
 }
 
 function isValidUid(uid) {
@@ -259,15 +281,17 @@ function getSelectionOptions(match) {
 }
 
 function labelForSelection(match, selection) {
-  if (selection === "A") return `${match.team_a} Win`;
-  if (selection === "B") return `${match.team_b} Win`;
-  if (selection === "DRAW") return "Draw";
-  if (String(selection).toUpperCase() === "OTHERS") return "Others";
-  return String(selection || "Unknown");
-}
+  const raw = String(selection || "").trim();
+  const upper = raw.toUpperCase();
 
-function formatSelectionButtonLabel(match, option, amount) {
-  return `${formatSelectionWithFlags(match, option)} | ${formatAmount(amount)} ${match.currency}`;
+  if (upper === "A") return `${match.team_a} Win`;
+  if (upper === "B") return `${match.team_b} Win`;
+  if (upper === "DRAW") return "Draw";
+  if (upper === "A_OTHER") return `Other ${match.team_a} Win`;
+  if (upper === "DRAW_OTHER") return "Other Draw";
+  if (upper === "B_OTHER") return `Other ${match.team_b} Win`;
+
+  return raw || "Unknown";
 }
 
 function parseScoreValue(input) {
@@ -281,11 +305,44 @@ function parseScoreValue(input) {
   };
 }
 
-function generateScoreOptions(startScore, endScore, lastOption) {
-  const start = parseScoreValue(startScore);
-  const end = parseScoreValue(endScore);
+function getSelectionOutcome(selection) {
+  const raw = String(selection || "").trim();
+  const upper = raw.toUpperCase();
 
-  if (!start || !end) return null;
+  if (upper === "A" || upper === "A_OTHER") return "A";
+  if (upper === "B" || upper === "B_OTHER") return "B";
+  if (upper === "DRAW" || upper === "DRAW_OTHER") return "DRAW";
+
+  const score = parseScoreValue(raw);
+  if (!score) return null;
+
+  if (score.home > score.away) return "A";
+  if (score.home < score.away) return "B";
+  return "DRAW";
+}
+
+function getOutcomeLabel(match, outcome) {
+  if (outcome === "A") return `${formatTeamWithFlag(match.team_a)} Win`;
+  if (outcome === "B") return `${formatTeamWithFlag(match.team_b)} Win`;
+  return "Draw";
+}
+
+function getOutcomeCallbackLabel(match, outcome, totals = null) {
+  const label = getOutcomeLabel(match, outcome);
+
+  if (!totals) return label;
+
+  return `${label} | ${formatAmount(getOutcomeTotal(match, totals, outcome))} ${match.currency}`;
+}
+
+function formatSelectionButtonLabel(match, option) {
+  return formatSelectionWithFlags(match, option);
+}
+
+function generateScoreOptions(startScore = "0:0", endScore = "5:5", lastOption = "Others") {
+  const start = parseScoreValue(startScore) || { home: 0, away: 0 };
+  const end = parseScoreValue(endScore) || { home: 5, away: 5 };
+
   if (start.home > end.home || start.away > end.away) return null;
 
   const scores = [];
@@ -306,8 +363,27 @@ function generateScoreOptions(startScore, endScore, lastOption) {
     return sb.home - sa.home;
   });
 
-  const finalOption = String(lastOption || "Others").trim() || "Others";
-  return [...scores, finalOption];
+  return [...scores, "A_OTHER", "DRAW_OTHER", "B_OTHER"];
+}
+
+function getOptionsByOutcome(match, outcome) {
+  const options = getSelectionOptions(match);
+  const normalOptions = options.filter((option) => getSelectionOutcome(option) === outcome);
+  const otherOption = outcome === "A" ? "A_OTHER" : outcome === "B" ? "B_OTHER" : "DRAW_OTHER";
+
+  const withoutOther = normalOptions.filter((option) => String(option).toUpperCase() !== otherOption);
+
+  if (options.map((option) => String(option).toUpperCase()).includes(otherOption)) {
+    return [...withoutOther, otherOption];
+  }
+
+  return withoutOther;
+}
+
+function getOutcomeTotal(match, totals, outcome) {
+  return getOptionsByOutcome(match, outcome).reduce((sum, option) => {
+    return sum.plus(totals[option] || 0);
+  }, new Decimal(0));
 }
 
 function resultInputToSelection(match, input) {
@@ -316,6 +392,12 @@ function resultInputToSelection(match, input) {
 
   const exact = options.find((option) => option.toLowerCase() === raw.toLowerCase());
   if (exact) return exact;
+
+  const normalized = raw.toUpperCase();
+  if (["A_OTHER", "DRAW_OTHER", "B_OTHER"].includes(normalized)) {
+    const option = options.find((item) => item.toUpperCase() === normalized);
+    return option || normalized;
+  }
 
   const legacyValue = normalizeTeam(raw);
   if (legacyValue === "DRAW" || legacyValue === "TIE") return "DRAW";
@@ -464,15 +546,45 @@ function getTotalPool(totals) {
 }
 
 function buildMatchKeyboard(match, totals) {
-  const options = getSelectionOptions(match);
+  return Markup.inlineKeyboard([
+    [Markup.button.callback(getOutcomeCallbackLabel(match, "A", totals), `wcoutcome:${match.match_code}:A`)],
+    [Markup.button.callback(getOutcomeCallbackLabel(match, "DRAW", totals), `wcoutcome:${match.match_code}:DRAW`)],
+    [Markup.button.callback(getOutcomeCallbackLabel(match, "B", totals), `wcoutcome:${match.match_code}:B`)]
+  ]);
+}
+
+function buildScoreKeyboard(match, outcome) {
+  const options = getOptionsByOutcome(match, outcome);
   const rows = options.map((option) => [
     Markup.button.callback(
-      formatSelectionButtonLabel(match, option, totals[option] || 0),
+      formatSelectionButtonLabel(match, option),
       `wcsel:${match.match_code}:${option}`
     )
   ]);
 
+  rows.push([Markup.button.callback("⬅️ Back", `wcmatch:${match.match_code}`)]);
+
   return Markup.inlineKeyboard(rows);
+}
+
+function buildScoreMessage(match, totals, outcome) {
+  const totalPool = getTotalPool(totals);
+  const outcomePool = getOutcomeTotal(match, totals, outcome);
+  const statusText = isBettingOpen(match) ? "Open" : match.status === "open" ? "Closed" : match.status.toUpperCase();
+
+  return `⚽ World Cup Prediction
+
+🔸 Match ID: ${match.match_code}
+🔸 Match: ${formatTeamWithFlag(match.team_a)} vs ${formatTeamWithFlag(match.team_b)}
+🔸 Status: ${statusText}
+🔸 Betting Time Left: ${formatTimeLeft(match.betting_end_at)}
+
+🔸 Selection Type: ${getOutcomeLabel(match, outcome)}
+🔸 Selection Pool: ${formatAmount(outcomePool)} ${match.currency}
+
+🎉Total Pool: ${formatAmount(totalPool)} ${match.currency}
+
+Please select the exact score below.`;
 }
 
 function buildMatchMessage(match, totals) {
@@ -561,7 +673,7 @@ async function createMatch(ctx, text) {
   const selectionOptions = generateScoreOptions(match[6], match[7], match[8]);
 
   if (!teamA || !teamB || teamA === teamB) {
-    return ctx.reply("Invalid teams. Example: /worldcup_FRA_BRA_1_1_20_0:0_3:3_Others");
+    return ctx.reply("Invalid teams. Example: /worldcup_FRA_BRA_1_1_20");
   }
 
   if (
@@ -572,11 +684,11 @@ async function createMatch(ctx, text) {
     minutes > 59 ||
     days * 1440 + hours * 60 + minutes <= 0
   ) {
-    return ctx.reply("Invalid betting time. Example: /worldcup_FRA_BRA_1_1_20_0:0_3:3_Others");
+    return ctx.reply("Invalid betting time. Example: /worldcup_FRA_BRA_1_1_20");
   }
 
   if (!selectionOptions || selectionOptions.length < 2) {
-    return ctx.reply("Invalid score range. Example: /worldcup_FRA_BRA_1_1_20_0:0_3:3_Others");
+    return ctx.reply("Invalid score range. Example: /worldcup_FRA_BRA_1_1_20_0:0_5:5_Others");
   }
 
   const matchCode = await generateUniqueCode("WC", "wc_matches", "match_code");
@@ -693,6 +805,41 @@ async function showSelectedMatch(ctx, matchCode, edit = false) {
   return ctx.reply(message, keyboard);
 }
 
+async function showOutcomeScores(ctx, matchCode, outcome, edit = false) {
+  const match = await getMatch(matchCode);
+
+  if (!match) {
+    return ctx.answerCbQuery ? ctx.answerCbQuery("Match not found.") : ctx.reply("Match not found.");
+  }
+
+  const totals = await getMatchTotals(matchCode, match);
+  const message = buildScoreMessage(match, totals, outcome);
+  const keyboard = buildScoreKeyboard(match, outcome);
+
+  if (edit && ctx.editMessageText) {
+    return ctx.editMessageText(message, keyboard);
+  }
+
+  return ctx.reply(message, keyboard);
+}
+
+async function getSelectionPool(matchCode, selection) {
+  const { data, error } = await supabase
+    .from("wc_orders")
+    .select("confirmed_amount")
+    .eq("match_code", matchCode)
+    .eq("selection", selection)
+    .eq("status", "confirmed");
+
+  if (error) {
+    throw new Error(`Failed to load selection pool: ${error.message}`);
+  }
+
+  return (data || []).reduce((sum, order) => {
+    return sum.plus(order.confirmed_amount || 0);
+  }, new Decimal(0));
+}
+
 async function handleAmountInput(ctx, text, session) {
   const amount = parsePositiveAmount(text);
 
@@ -752,19 +899,17 @@ async function handleAmountInput(ctx, text, session) {
 
   const pendingMessage = await ctx.reply(`✅ Pending Order Created
 
-Order ID: ${data.order_code}
-UID: ${data.ueex_uid}
-TG: ${getTelegramUserLabel(data)}
-Match: ${formatTeamWithFlag(match.team_a)} vs ${formatTeamWithFlag(match.team_b)}
-Selection: ${formatSelectionWithFlags(match, data.selection)}
-Amount: ${formatAmount(amount)} ${match.currency}
+⚽️ Match: ${formatTeamWithFlag(match.team_a)} vs ${formatTeamWithFlag(match.team_b)}
 
-Please transfer ${formatAmount(amount)} ${match.currency} via UEEx internal transfer to UID ${match.receiver_uid}.
+🔸 Order ID: ${data.order_code}
+🔸 UID: ${data.ueex_uid}
+🔸 TG: ${getTelegramUserLabel(data)}
+🔸 Selection: ${formatSelectionWithFlags(match, data.selection)}
+🔸 Amount: ${formatAmount(amount)} ${match.currency}
 
-Your vote will only be counted after admin confirmation.
-
-Admin confirmation command:
-/confirm_${data.order_code}_${formatAmount(amount)}`);
+❗️Please transfer ${formatAmount(amount)} ${match.currency} via UEEx internal transfer to UID ${match.receiver_uid}.
+❗️Your vote will only be counted after admin confirmation.
+❗️Admin confirmation command: /confirm_${data.order_code}_${formatAmount(amount)}`);
 
   await supabase
     .from("wc_orders")
@@ -842,12 +987,13 @@ async function confirmOrder(ctx, text) {
 
   return ctx.reply(`✅ Order Confirmed
 
-Order ID: ${orderCode}
-UID: ${order.ueex_uid}
-TG: ${getTelegramUserLabel(order)}
-Match: ${formatTeamWithFlag(matchData.team_a)} vs ${formatTeamWithFlag(matchData.team_b)}
-Selection: ${formatSelectionWithFlags(matchData, order.selection)}
-Confirmed Amount: ${formatAmount(amount)} ${matchData.currency}`);
+⚽️ Match: ${formatTeamWithFlag(matchData.team_a)} vs ${formatTeamWithFlag(matchData.team_b)}
+
+🔸 Order ID: ${orderCode}
+🔸 UID: ${order.ueex_uid}
+🔸 TG: ${getTelegramUserLabel(order)}
+🔸 Selection: ${formatSelectionWithFlags(matchData, order.selection)}
+🔸 Confirmed Amount: ${formatAmount(amount)} ${matchData.currency}`);
 }
 
 async function voidOrder(ctx, text) {
@@ -941,7 +1087,7 @@ async function setMatchResult(ctx, text) {
   if (!(await requireAdmin(ctx))) return;
 
   const cleaned = cleanCommandText(text);
-  const commandMatch = cleaned.match(/^\/result_(WC[A-Z0-9]+)_([A-Za-z0-9:]+)$/i);
+  const commandMatch = cleaned.match(/^\/result_(WC[A-Z0-9]+)_([A-Za-z0-9:_-]+)$/i);
 
   if (!commandMatch) {
     return ctx.reply("Invalid format.\nExample: /result_WC0001_0:0");
@@ -1437,6 +1583,12 @@ bot.on("callback_query", async (ctx) => {
       const matchCode = data.split(":")[1];
       await ctx.answerCbQuery();
       return showSelectedMatch(ctx, matchCode, true);
+    }
+
+    if (data.startsWith("wcoutcome:")) {
+      const [, matchCode, outcome] = data.split(":");
+      await ctx.answerCbQuery();
+      return showOutcomeScores(ctx, matchCode, outcome, true);
     }
 
     if (data.startsWith("wcsel:")) {
