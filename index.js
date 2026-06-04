@@ -19,6 +19,7 @@ const RECEIVER_UID = process.env.RECEIVER_UID || "1234567";
 const DEFAULT_CURRENCY = process.env.DEFAULT_CURRENCY || "UE";
 const PLATFORM_FEE_BPS = Number(process.env.PLATFORM_FEE_BPS || 500);
 const MAX_OPEN_MATCHES_SHOWN = Number(process.env.MAX_OPEN_MATCHES_SHOWN || 20);
+const LIVE_UPDATE_INTERVAL_MS = Number(process.env.LIVE_UPDATE_INTERVAL_MS || 30000);
 
 const ADMIN_USER_IDS = (process.env.ADMIN_USER_IDS || "")
   .split(",")
@@ -162,6 +163,23 @@ function formatTeamWithFlag(team) {
   return `${getTeamFlag(team)} ${normalizeTeam(team)}`;
 }
 
+function getTelegramUserLabel(userLike) {
+  if (!userLike) return "Unknown TG";
+  if (userLike.username) return `@${userLike.username}`;
+
+  const name = [userLike.first_name, userLike.last_name].filter(Boolean).join(" ");
+  if (name) return name;
+
+  if (userLike.telegram_id) return `TG ${userLike.telegram_id}`;
+  if (userLike.id) return `TG ${userLike.id}`;
+
+  return "Unknown TG";
+}
+
+function formatSelectionWithFlags(match, selection) {
+  return `${getTeamFlag(match.team_a)} ${labelForSelection(match, selection)} ${getTeamFlag(match.team_b)}`;
+}
+
 function isValidUid(uid) {
   if (!/^\d+$/.test(String(uid || ""))) return false;
   const num = Number(uid);
@@ -249,7 +267,7 @@ function labelForSelection(match, selection) {
 }
 
 function formatSelectionButtonLabel(match, option, amount) {
-  return `${getTeamFlag(match.team_a)} ${labelForSelection(match, option)} ${getTeamFlag(match.team_b)} | ${formatAmount(amount)} ${match.currency}`;
+  return `${formatSelectionWithFlags(match, option)} | ${formatAmount(amount)} ${match.currency}`;
 }
 
 function parseScoreValue(input) {
@@ -493,6 +511,34 @@ async function updateLiveMatchMessage(matchCode) {
   }
 }
 
+async function updateAllLiveOpenMatches() {
+  try {
+    const { data, error } = await supabase
+      .from("wc_matches")
+      .select("match_code")
+      .eq("status", "open")
+      .not("live_message_id", "is", null)
+      .limit(50);
+
+    if (error) {
+      console.error("Load live matches error:", error.message);
+      return;
+    }
+
+    for (const match of data || []) {
+      await updateLiveMatchMessage(match.match_code);
+    }
+  } catch (error) {
+    console.error("Live match updater error:", error.message);
+  }
+}
+
+function startLiveMatchUpdater() {
+  if (!LIVE_UPDATE_INTERVAL_MS || LIVE_UPDATE_INTERVAL_MS < 5000) return;
+
+  setInterval(updateAllLiveOpenMatches, LIVE_UPDATE_INTERVAL_MS);
+}
+
 async function createMatch(ctx, text) {
   if (!(await requireAdmin(ctx))) return;
 
@@ -704,11 +750,13 @@ async function handleAmountInput(ctx, text, session) {
 
   clearSession(ctx);
 
-  return ctx.reply(`✅ Pending Order Created
+  const pendingMessage = await ctx.reply(`✅ Pending Order Created
 
 Order ID: ${data.order_code}
+UID: ${data.ueex_uid}
+TG: ${getTelegramUserLabel(data)}
 Match: ${formatTeamWithFlag(match.team_a)} vs ${formatTeamWithFlag(match.team_b)}
-Selection: ${labelForSelection(match, data.selection)}
+Selection: ${formatSelectionWithFlags(match, data.selection)}
 Amount: ${formatAmount(amount)} ${match.currency}
 
 Please transfer ${formatAmount(amount)} ${match.currency} via UEEx internal transfer to UID ${match.receiver_uid}.
@@ -717,6 +765,17 @@ Your vote will only be counted after admin confirmation.
 
 Admin confirmation command:
 /confirm_${data.order_code}_${formatAmount(amount)}`);
+
+  await supabase
+    .from("wc_orders")
+    .update({
+      pending_chat_id: ctx.chat.id,
+      pending_message_id: pendingMessage.message_id,
+      updated_at: new Date().toISOString()
+    })
+    .eq("order_code", data.order_code);
+
+  return pendingMessage;
 }
 
 async function confirmOrder(ctx, text) {
@@ -771,15 +830,24 @@ async function confirmOrder(ctx, text) {
     return ctx.reply(`Failed to confirm order: ${updateError.message}`);
   }
 
+  if (order.pending_chat_id && order.pending_message_id) {
+    try {
+      await bot.telegram.deleteMessage(order.pending_chat_id, order.pending_message_id);
+    } catch (error) {
+      // Ignore delete failures.
+    }
+  }
+
   await updateLiveMatchMessage(order.match_code);
 
-  return ctx.reply(`✅ Order confirmed
+  return ctx.reply(`✅ Order Confirmed
 
 Order ID: ${orderCode}
 UID: ${order.ueex_uid}
+TG: ${getTelegramUserLabel(order)}
 Match: ${formatTeamWithFlag(matchData.team_a)} vs ${formatTeamWithFlag(matchData.team_b)}
-Selection: ${labelForSelection(matchData, order.selection)}
-Confirmed: ${formatAmount(amount)} ${matchData.currency}`);
+Selection: ${formatSelectionWithFlags(matchData, order.selection)}
+Confirmed Amount: ${formatAmount(amount)} ${matchData.currency}`);
 }
 
 async function voidOrder(ctx, text) {
@@ -1167,6 +1235,88 @@ ${lines.length ? lines.join("\n") : "No winners."}
 Admins will arrange reward distribution manually.`);
 }
 
+function getMatchResultDisplay(match) {
+  if (!match) return "未开始";
+
+  if (match.result) {
+    return formatSelectionWithFlags(match, match.result);
+  }
+
+  if (match.status === "locked") return "进行中";
+  if (match.status === "resulted" || match.status === "settled") return match.result ? formatSelectionWithFlags(match, match.result) : "进行中";
+
+  return "未开始";
+}
+
+async function getConfirmedOrdersForMatches(matchCodes) {
+  if (!matchCodes.length) return [];
+
+  const { data, error } = await supabase
+    .from("wc_orders")
+    .select("*")
+    .in("match_code", matchCodes)
+    .eq("status", "confirmed");
+
+  if (error) {
+    throw new Error(`Failed to load match pools: ${error.message}`);
+  }
+
+  return data || [];
+}
+
+function buildMatchStatsMap(matches, confirmedOrders) {
+  const map = new Map();
+
+  for (const match of matches || []) {
+    map.set(match.match_code, {
+      match,
+      totalPool: new Decimal(0),
+      winningPool: new Decimal(0),
+      netPool: new Decimal(0),
+      feeBps: Number(match.fee_bps || PLATFORM_FEE_BPS),
+      orders: []
+    });
+  }
+
+  for (const order of confirmedOrders || []) {
+    const stats = map.get(order.match_code);
+    if (!stats) continue;
+
+    const amount = new Decimal(order.confirmed_amount || 0);
+    stats.totalPool = stats.totalPool.plus(amount);
+    stats.orders.push(order);
+
+    if (stats.match.result && order.selection === stats.match.result) {
+      stats.winningPool = stats.winningPool.plus(amount);
+    }
+  }
+
+  for (const stats of map.values()) {
+    const feeAmount = stats.totalPool.mul(stats.feeBps).div(10000);
+    stats.netPool = stats.totalPool.minus(feeAmount);
+  }
+
+  return map;
+}
+
+function calculateOrderPnl(order, match, stats) {
+  if (!match || order.status !== "confirmed" || !match.result) return "-";
+
+  const amount = new Decimal(order.confirmed_amount || 0);
+
+  if (order.selection !== match.result) {
+    return `-${formatAmount(amount)} ${order.currency}`;
+  }
+
+  if (!stats || !stats.winningPool || stats.winningPool.lte(0)) return "-";
+
+  const payout = amount.div(stats.winningPool).mul(stats.netPool);
+  const pnl = payout.minus(amount);
+  const sign = pnl.gte(0) ? "+" : "";
+
+  return `${sign}${formatAmount(pnl)} ${order.currency}`;
+}
+
 async function showMyVote(ctx) {
   const { data: orders, error } = await supabase
     .from("wc_orders")
@@ -1185,20 +1335,38 @@ async function showMyVote(ctx) {
 
   const matchCodes = [...new Set(orders.map((order) => order.match_code))];
 
-  const { data: matches } = await supabase
+  const { data: matches, error: matchError } = await supabase
     .from("wc_matches")
     .select("*")
     .in("match_code", matchCodes);
 
+  if (matchError) {
+    return ctx.reply(`Failed to load matches: ${matchError.message}`);
+  }
+
+  const confirmedOrders = await getConfirmedOrdersForMatches(matchCodes);
   const matchMap = new Map((matches || []).map((match) => [match.match_code, match]));
+  const statsMap = buildMatchStatsMap(matches || [], confirmedOrders);
 
   const lines = orders.map((order, index) => {
     const match = matchMap.get(order.match_code);
-    const matchTitle = match ? `${match.team_a} vs ${match.team_b}` : order.match_code;
-    const selection = match ? labelForSelection(match, order.selection) : order.selection;
+    const stats = statsMap.get(order.match_code);
+    const matchTitle = match ? `${formatTeamWithFlag(match.team_a)} vs ${formatTeamWithFlag(match.team_b)}` : order.match_code;
+    const selection = match ? formatSelectionWithFlags(match, order.selection) : order.selection;
     const amount = order.status === "confirmed" ? order.confirmed_amount : order.expected_amount;
+    const totalPool = stats ? stats.totalPool : new Decimal(0);
+    const resultDisplay = getMatchResultDisplay(match);
+    const pnl = calculateOrderPnl(order, match, stats);
+    const orderStatus = order.status === "confirmed" ? "Confirmed" : order.status === "pending" ? "Pending" : order.status;
 
-    return `${index + 1}. ${matchTitle}\nOrder: ${order.order_code}\nSelection: ${selection}\nAmount: ${formatAmount(amount)} ${order.currency}\nStatus: ${order.status}`;
+    return `${index + 1}. ${matchTitle}
+🔸 Order: ${order.order_code}
+🔸 Selection: ${selection}
+🔸 Amount: ${formatAmount(amount)} ${order.currency}
+🔸 Total Pool: ${formatAmount(totalPool)} ${order.currency}
+🔸 Order Status: ${orderStatus}
+🔸 比赛赛果：${resultDisplay}
+🔸 总盈亏：${pnl}`;
   });
 
   return ctx.reply(`📊 My Votes
@@ -1315,7 +1483,7 @@ bot.on("callback_query", async (ctx) => {
       await ctx.answerCbQuery();
 
       const prompt = await ctx.reply(
-        `Selection: ${labelForSelection(match, selection)}\n\nPlease enter your expected ${match.currency} amount.`,
+        `Selection: ${formatSelectionWithFlags(match, selection)}\n\nPlease enter your expected ${match.currency} amount.`,
         {
           reply_markup: {
             force_reply: true,
@@ -1400,7 +1568,7 @@ bot.on("message", async (ctx) => {
         const match = await getMatch(session.nextMatchCode);
 
         const prompt = await ctx.reply(
-          `✅ UID confirmed: ${uid}\n\nSelection: ${labelForSelection(match, session.nextSelection)}\n\nPlease enter your expected ${match.currency} amount.`,
+          `✅ UID confirmed: ${uid}\n\nSelection: ${formatSelectionWithFlags(match, session.nextSelection)}\n\nPlease enter your expected ${match.currency} amount.`,
           {
             reply_markup: {
               force_reply: true,
@@ -1470,6 +1638,9 @@ app.listen(PORT, async () => {
     } else {
       console.log("WEBHOOK_URL is not set. Webhook was not configured.");
     }
+
+    startLiveMatchUpdater();
+    console.log(`Live match updater interval: ${LIVE_UPDATE_INTERVAL_MS} ms`);
   } catch (error) {
     console.error("Startup error:", error);
   }
