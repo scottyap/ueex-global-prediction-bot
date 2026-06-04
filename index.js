@@ -212,13 +212,18 @@ function normalizeTeam(team) {
 }
 
 const TEAM_FLAG_MAP = {
-  ARG: "🇦🇷", AUS: "🇦🇺", AUT: "🇦🇹", BEL: "🇧🇪", BRA: "🇧🇷", CAN: "🇨🇦",
-  CHI: "🇨🇱", CHN: "🇨🇳", COL: "🇨🇴", CRO: "🇭🇷", CZE: "🇨🇿", DEN: "🇩🇰",
-  ECU: "🇪🇨", ENG: "🏴", ESP: "🇪🇸", FRA: "🇫🇷", GER: "🇩🇪", GHA: "🇬🇭",
-  IRN: "🇮🇷", ITA: "🇮🇹", JPN: "🇯🇵", KOR: "🇰🇷", MAR: "🇲🇦", MEX: "🇲🇽",
-  NED: "🇳🇱", NGA: "🇳🇬", POL: "🇵🇱", POR: "🇵🇹", QAT: "🇶🇦", RUS: "🇷🇺",
-  SEN: "🇸🇳", SRB: "🇷🇸", SUI: "🇨🇭", TUN: "🇹🇳", UKR: "🇺🇦", URU: "🇺🇾",
-  USA: "🇺🇸", WAL: "🏴", KSA: "🇸🇦"
+  ALG: "🇩🇿", ARG: "🇦🇷", AUS: "🇦🇺", AUT: "🇦🇹", BEL: "🇧🇪",
+  BIH: "🇧🇦", BRA: "🇧🇷", CAN: "🇨🇦", CHI: "🇨🇱", CHN: "🇨🇳",
+  CIV: "🇨🇮", COD: "🇨🇩", COL: "🇨🇴", CPV: "🇨🇻", CRO: "🇭🇷",
+  CUW: "🇨🇼", CZE: "🇨🇿", DEN: "🇩🇰", ECU: "🇪🇨", EGY: "🇪🇬",
+  ENG: "🏴", ESP: "🇪🇸", FRA: "🇫🇷", GER: "🇩🇪", GHA: "🇬🇭",
+  HAI: "🇭🇹", IRN: "🇮🇷", IRQ: "🇮🇶", ITA: "🇮🇹", JOR: "🇯🇴",
+  JPN: "🇯🇵", KOR: "🇰🇷", KSA: "🇸🇦", MAR: "🇲🇦", MEX: "🇲🇽",
+  NED: "🇳🇱", NGA: "🇳🇬", NOR: "🇳🇴", NZL: "🇳🇿", PAN: "🇵🇦",
+  PAR: "🇵🇾", POL: "🇵🇱", POR: "🇵🇹", QAT: "🇶🇦", RUS: "🇷🇺",
+  SCO: "🏴", SEN: "🇸🇳", SRB: "🇷🇸", SUI: "🇨🇭", SWE: "🇸🇪",
+  TUN: "🇹🇳", TUR: "🇹🇷", UKR: "🇺🇦", URU: "🇺🇾", USA: "🇺🇸",
+  UZB: "🇺🇿", WAL: "🏴", ZAF: "🇿🇦"
 };
 
 function getTeamFlag(team) {
@@ -707,8 +712,8 @@ function buildScoreMessage(match, totals, outcome) {
 ${getMatchMetaLines(match)}🔸 Status: ${statusText}
 🔸 Betting Time Left: ${formatTimeLeft(match.betting_end_at)}
 
-🔸 Selection Type: ${getOutcomeLabel(match, outcome)}
-🔸 Selection Pool: ${formatAmount(outcomePool)} ${match.currency}
+📍 Selection Type: ${getOutcomeLabel(match, outcome)}
+📍 Selection Pool: ${formatAmount(outcomePool)} ${match.currency}
 
 🎉Total Pool: ${formatAmount(totalPool)} ${match.currency}
 
