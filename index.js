@@ -678,6 +678,25 @@ function buildScoreKeyboard(match, outcome) {
   return Markup.inlineKeyboard(rows);
 }
 
+function getMatchMetaLines(match) {
+  const lines = [];
+
+  if (match.match_date) {
+    lines.push(`🔸 Match Date: ${match.match_date}`);
+  }
+
+  if (match.match_time || match.match_timezone) {
+    const timeText = [match.match_time, match.match_timezone].filter(Boolean).join(" ");
+    if (timeText) lines.push(`🔸 Match Time: ${timeText}`);
+  }
+
+  if (match.match_stage) {
+    lines.push(`🔸 Stage: ${match.match_stage}`);
+  }
+
+  return lines.length ? `${lines.join("\n")}\n` : "";
+}
+
 function buildScoreMessage(match, totals, outcome) {
   const totalPool = getTotalPool(totals);
   const outcomePool = getOutcomeTotal(match, totals, outcome);
@@ -685,7 +704,7 @@ function buildScoreMessage(match, totals, outcome) {
 
   return `🔸 Match ID: ${match.match_code}
 🔸 Match: ${formatTeamWithFlag(match.team_a)} vs ${formatTeamWithFlag(match.team_b)}
-🔸 Status: ${statusText}
+${getMatchMetaLines(match)}🔸 Status: ${statusText}
 🔸 Betting Time Left: ${formatTimeLeft(match.betting_end_at)}
 
 🔸 Selection Type: ${getOutcomeLabel(match, outcome)}
@@ -702,7 +721,7 @@ function buildMatchMessage(match, totals) {
 
   return `🔸 Match ID: ${match.match_code}
 🔸 Match: ${formatTeamWithFlag(match.team_a)} vs ${formatTeamWithFlag(match.team_b)}
-🔸 Status: ${statusText}
+${getMatchMetaLines(match)}🔸 Status: ${statusText}
 🔸 Betting Time Left: ${formatTimeLeft(match.betting_end_at)}
 
 🎉Total Pool: ${formatAmount(totalPool)} ${match.currency}`;
@@ -851,10 +870,12 @@ async function createMatch(ctx, text) {
   }
 
   const cleaned = cleanCommandText(text);
-  const match = cleaned.match(/^\/worldcup_([A-Za-z0-9]+)_([A-Za-z0-9]+)_(\d+)_(\d+)_(\d+)(?:_([0-9]+:[0-9]+)_([0-9]+:[0-9]+)_([A-Za-z0-9]+))?$/i);
+  const match = cleaned.match(/^\/worldcup_([A-Za-z0-9]+)_([A-Za-z0-9]+)_(\d+):(\d+):(\d+)_([0-9]+:[0-9]+)_([0-9]+:[0-9]+)_([A-Za-z0-9]+)_([0-9]{4}\.[0-9]{2}\.[0-9]{2})_([0-9]{1,2}:[0-9]{2})_(UTC[+-]\d{1,2})_([A-Za-z0-9-]+)$/i);
 
   if (!match) {
-    return ctx.reply("Invalid format.\nExample: /worldcup_FRA_BRA_0_0_30\nOptional: /worldcup_FRA_BRA_1_1_20_0:0_5:5_Others");
+    return ctx.reply(
+      "Invalid format.\nExample:\n/worldcup_MEX_ZAF_7:7:51_0:0_5:5_Others_2026.06.11_23:00_UTC+4_Group\n\nFormat:\n/worldcup_Team1_Team2_Days:Hours:Minutes_MinScore_MaxScore_Others_Date_Time_Timezone_Stage"
+    );
   }
 
   const teamA = normalizeTeam(match[1]);
@@ -865,10 +886,14 @@ async function createMatch(ctx, text) {
   const startScore = match[6] || "0:0";
   const endScore = match[7] || "5:5";
   const lastOption = match[8] || "Others";
+  const matchDate = match[9];
+  const matchTime = match[10];
+  const matchTimezone = match[11].toUpperCase();
+  const matchStage = match[12];
   const selectionOptions = generateScoreOptions(startScore, endScore, lastOption);
 
   if (!teamA || !teamB || teamA === teamB) {
-    return ctx.reply("Invalid teams. Example: /worldcup_FRA_BRA_0_0_30");
+    return ctx.reply("Invalid teams. Example: /worldcup_MEX_ZAF_7:7:51_0:0_5:5_Others_2026.06.11_23:00_UTC+4_Group");
   }
 
   if (
@@ -879,11 +904,16 @@ async function createMatch(ctx, text) {
     minutes > 59 ||
     days * 1440 + hours * 60 + minutes <= 0
   ) {
-    return ctx.reply("Invalid betting time. Example: /worldcup_FRA_BRA_0_0_30");
+    return ctx.reply("Invalid betting time. Use Days:Hours:Minutes, for example: 7:7:51");
+  }
+
+  const timeParts = matchTime.split(":").map(Number);
+  if (timeParts.length !== 2 || timeParts[0] < 0 || timeParts[0] > 23 || timeParts[1] < 0 || timeParts[1] > 59) {
+    return ctx.reply("Invalid match time. Example: 23:00");
   }
 
   if (!selectionOptions || selectionOptions.length < 2) {
-    return ctx.reply("Invalid score range. Example: /worldcup_FRA_BRA_1_1_20_0:0_5:5_Others");
+    return ctx.reply("Invalid score range. Example: 0:0_5:5_Others");
   }
 
   const matchCode = await generateUniqueCode("WC", "wc_matches", "match_code");
@@ -899,6 +929,10 @@ async function createMatch(ctx, text) {
     receiver_uid: RECEIVER_UID,
     fee_bps: PLATFORM_FEE_BPS,
     selection_options: selectionOptions,
+    match_date: matchDate,
+    match_time: matchTime,
+    match_timezone: matchTimezone,
+    match_stage: matchStage,
     status: "open",
     betting_start_at: now.toISOString(),
     betting_end_at: bettingEndAt.toISOString(),
@@ -945,7 +979,7 @@ async function createMatch(ctx, text) {
     })
     .eq("match_code", data.match_code);
 
-  return ctx.reply(`✅ Match created and posted to the World Cup topic.\n\nMatch ID: ${data.match_code}\nMatch: ${formatTeamWithFlag(teamA)} vs ${formatTeamWithFlag(teamB)}\nBetting closes in ${days}d ${hours}h ${minutes}m.`);
+  return ctx.reply(`✅ Match created and posted to the World Cup topic.\n\nMatch ID: ${data.match_code}\nMatch: ${formatTeamWithFlag(teamA)} vs ${formatTeamWithFlag(teamB)}\nMatch Time: ${matchDate} ${matchTime} ${matchTimezone}\nStage: ${matchStage}\nBetting closes in ${days}d ${hours}h ${minutes}m.`);
 }
 
 async function showWorldCupEntry(ctx) {
@@ -1977,7 +2011,7 @@ User:
 /myvote - View my votes
 
 Admin:
-/worldcup_FRA_BRA_0_0_30 - Create match and post it to World Cup topic
+/worldcup_MEX_ZAF_7:7:51_0:0_5:5_Others_2026.06.11_23:00_UTC+4_Group - Create match and post it to World Cup topic
 /confirm_O000123_1150 - Confirm payment
 /mockpay_O000123_1150 - Mock auto payment test
 /void_O000123 - Void order
