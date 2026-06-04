@@ -584,7 +584,6 @@ function buildScoreMessage(match, totals, outcome) {
 🔸 Match: ${formatTeamWithFlag(match.team_a)} vs ${formatTeamWithFlag(match.team_b)}
 🔸 Status: ${statusText}
 🔸 Betting Time Left: ${formatTimeLeft(match.betting_end_at)}
-
 🔸 Selection Type: ${getOutcomeLabel(match, outcome)}
 🔸 Selection Pool: ${formatAmount(outcomePool)} ${match.currency}
 
