@@ -20,6 +20,9 @@ const DEFAULT_CURRENCY = process.env.DEFAULT_CURRENCY || "UE";
 const PLATFORM_FEE_BPS = Number(process.env.PLATFORM_FEE_BPS || 500);
 const MAX_OPEN_MATCHES_SHOWN = Number(process.env.MAX_OPEN_MATCHES_SHOWN || 20);
 const LIVE_UPDATE_INTERVAL_MS = Number(process.env.LIVE_UPDATE_INTERVAL_MS || 30000);
+const WORLDCUP_IMAGE_URL = process.env.WORLDCUP_IMAGE_URL || "";
+const PENDING_ORDER_IMAGE_URL = process.env.PENDING_ORDER_IMAGE_URL || "";
+const ORDER_CONFIRMED_IMAGE_URL = process.env.ORDER_CONFIRMED_IMAGE_URL || "";
 
 const ADMIN_USER_IDS = (process.env.ADMIN_USER_IDS || "")
   .split(",")
@@ -601,6 +604,48 @@ function buildMatchMessage(match, totals) {
 🎉Total Pool: ${formatAmount(totalPool)} ${match.currency}`;
 }
 
+function buildPhotoExtra(caption, keyboard = null) {
+  const extra = { caption };
+
+  if (keyboard?.reply_markup) {
+    extra.reply_markup = keyboard.reply_markup;
+  }
+
+  return extra;
+}
+
+async function replyWithOptionalPhoto(ctx, imageUrl, text, keyboard = null) {
+  if (imageUrl) {
+    return ctx.replyWithPhoto(imageUrl, buildPhotoExtra(text, keyboard));
+  }
+
+  if (keyboard) {
+    return ctx.reply(text, keyboard);
+  }
+
+  return ctx.reply(text);
+}
+
+async function editLiveMessage(chatId, messageId, imageUrl, text, keyboard = null) {
+  if (imageUrl) {
+    return bot.telegram.editMessageCaption(
+      chatId,
+      messageId,
+      undefined,
+      text,
+      keyboard || undefined
+    );
+  }
+
+  return bot.telegram.editMessageText(
+    chatId,
+    messageId,
+    undefined,
+    text,
+    keyboard || undefined
+  );
+}
+
 async function updateLiveMatchMessage(matchCode) {
   const match = await getMatch(matchCode);
 
@@ -609,10 +654,10 @@ async function updateLiveMatchMessage(matchCode) {
   const totals = await getMatchTotals(matchCode, match);
 
   try {
-    await bot.telegram.editMessageText(
+    await editLiveMessage(
       match.chat_id,
       match.live_message_id,
-      undefined,
+      WORLDCUP_IMAGE_URL,
       buildMatchMessage(match, totals),
       buildMatchKeyboard(match, totals)
     );
@@ -723,7 +768,9 @@ async function createMatch(ctx, text) {
   }
 
   const totals = await getMatchTotals(data.match_code, data);
-  const liveMessage = await ctx.reply(
+  const liveMessage = await replyWithOptionalPhoto(
+    ctx,
+    WORLDCUP_IMAGE_URL,
     buildMatchMessage(data, totals),
     buildMatchKeyboard(data, totals)
   );
@@ -897,7 +944,7 @@ async function handleAmountInput(ctx, text, session) {
 
   clearSession(ctx);
 
-  const pendingMessage = await ctx.reply(`✅ Pending Order Created
+  const pendingMessageText = `✅ Pending Order Created
 
 ⚽️ Match: ${formatTeamWithFlag(match.team_a)} vs ${formatTeamWithFlag(match.team_b)}
 
@@ -909,7 +956,13 @@ async function handleAmountInput(ctx, text, session) {
 
 ❗️Please transfer ${formatAmount(amount)} ${match.currency} via UEEx internal transfer to UID ${match.receiver_uid}.
 ❗️Your vote will only be counted after admin confirmation.
-❗️Admin confirmation command: /confirm_${data.order_code}_${formatAmount(amount)}`);
+❗️Admin confirmation command: /confirm_${data.order_code}_${formatAmount(amount)}`;
+
+  const pendingMessage = await replyWithOptionalPhoto(
+    ctx,
+    PENDING_ORDER_IMAGE_URL,
+    pendingMessageText
+  );
 
   await supabase
     .from("wc_orders")
@@ -985,7 +1038,7 @@ async function confirmOrder(ctx, text) {
 
   await updateLiveMatchMessage(order.match_code);
 
-  return ctx.reply(`✅ Order Confirmed
+  const confirmedMessageText = `✅ Order Confirmed
 
 ⚽️ Match: ${formatTeamWithFlag(matchData.team_a)} vs ${formatTeamWithFlag(matchData.team_b)}
 
@@ -993,7 +1046,13 @@ async function confirmOrder(ctx, text) {
 🔸 UID: ${order.ueex_uid}
 🔸 TG: ${getTelegramUserLabel(order)}
 🔸 Selection: ${formatSelectionWithFlags(matchData, order.selection)}
-🔸 Confirmed Amount: ${formatAmount(amount)} ${matchData.currency}`);
+🔸 Confirmed Amount: ${formatAmount(amount)} ${matchData.currency}`;
+
+  return replyWithOptionalPhoto(
+    ctx,
+    ORDER_CONFIRMED_IMAGE_URL,
+    confirmedMessageText
+  );
 }
 
 async function voidOrder(ctx, text) {
@@ -1511,8 +1570,8 @@ async function showMyVote(ctx) {
 🔸 Amount: ${formatAmount(amount)} ${order.currency}
 🔸 Total Pool: ${formatAmount(totalPool)} ${order.currency}
 🔸 Order Status: ${orderStatus}
-🔸 Game Result：${resultDisplay}
-🔸 Total PnL：${pnl}`;
+🔸 比赛赛果：${resultDisplay}
+🔸 总盈亏：${pnl}`;
   });
 
   return ctx.reply(`📊 My Votes
