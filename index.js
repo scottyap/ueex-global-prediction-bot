@@ -1365,8 +1365,8 @@ async function showMyVote(ctx) {
 🔸 Amount: ${formatAmount(amount)} ${order.currency}
 🔸 Total Pool: ${formatAmount(totalPool)} ${order.currency}
 🔸 Order Status: ${orderStatus}
-🔸 比赛赛果：${resultDisplay}
-🔸 总盈亏：${pnl}`;
+🔸 Game Result：${resultDisplay}
+🔸 Total PnL：${pnl}`;
   });
 
   return ctx.reply(`📊 My Votes
