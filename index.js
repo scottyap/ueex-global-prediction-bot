@@ -32,6 +32,8 @@ const WORLDCUP_IMAGE_URL = process.env.WORLDCUP_IMAGE_URL || "";
 const PENDING_ORDER_IMAGE_URL = process.env.PENDING_ORDER_IMAGE_URL || "";
 const ORDER_CONFIRMED_IMAGE_URL = process.env.ORDER_CONFIRMED_IMAGE_URL || "";
 const ADMIN_GROUP_CHAT_ID = process.env.ADMIN_GROUP_CHAT_ID || "";
+const PUBLIC_GROUP_CHAT_ID = process.env.PUBLIC_GROUP_CHAT_ID || process.env.PUBLIC_CHAT_ID || "";
+const PUBLIC_WORLD_CUP_TOPIC_ID = process.env.PUBLIC_WORLD_CUP_TOPIC_ID || process.env.WORLD_CUP_TOPIC_ID || "";
 
 const ADMIN_USER_IDS = (process.env.ADMIN_USER_IDS || "")
   .split(",")
@@ -83,6 +85,10 @@ function isPrivateChat(ctx) {
 
 function isAdminGroupChat(ctx) {
   return Boolean(ADMIN_GROUP_CHAT_ID) && String(ctx.chat?.id || "") === String(ADMIN_GROUP_CHAT_ID);
+}
+
+function isPublicWorldCupChat(ctx) {
+  return Boolean(PUBLIC_GROUP_CHAT_ID) && String(ctx.chat?.id || "") === String(PUBLIC_GROUP_CHAT_ID);
 }
 
 function isAdminControlChat(ctx) {
@@ -633,16 +639,15 @@ function getPrivateMainMenu() {
 
 function buildGroupMatchKeyboard(match) {
   const url = getBetNowUrl(match.match_code);
-  const label = `${formatTeamWithFlag(match.team_a)} vs ${formatTeamWithFlag(match.team_b)}`;
 
   if (url) {
     return Markup.inlineKeyboard([
-      [Markup.button.url(label, url)]
+      [Markup.button.url("🗳 Vote Now", url)]
     ]);
   }
 
   return Markup.inlineKeyboard([
-    [Markup.button.callback(label, `wcmatch:${match.match_code}`)]
+    [Markup.button.callback("🗳 Vote Now", `wcmatch:${match.match_code}`)]
   ]);
 }
 
@@ -703,8 +708,19 @@ function buildMatchMessage(match, totals) {
 🎉Total Pool: ${formatAmount(totalPool)} ${match.currency}`;
 }
 
-function buildPhotoExtra(caption, keyboard = null) {
-  const extra = { caption };
+function buildPublicMatchMessage(match, totals) {
+  return `${buildMatchMessage(match, totals)}
+
+📌 Rules:
+• Tap Vote Now to enter the bot and submit your prediction.
+• Minimum voting amount: ${formatAmount(MIN_BET_AMOUNT)} ${match.currency}.
+• Transfer the exact ${match.currency} amount to UID ${match.receiver_uid}.
+• Use your Order ID as the transfer remark.
+• Votes are counted only after payment confirmation.`;
+}
+
+function buildPhotoExtra(caption, keyboard = null, extraOptions = {}) {
+  const extra = { caption, ...extraOptions };
 
   if (keyboard?.reply_markup) {
     extra.reply_markup = keyboard.reply_markup;
@@ -725,16 +741,17 @@ async function replyWithOptionalPhoto(ctx, imageUrl, text, keyboard = null) {
   return ctx.reply(text);
 }
 
-async function sendOptionalPhoto(chatId, imageUrl, text, keyboard = null) {
+async function sendOptionalPhoto(chatId, imageUrl, text, keyboard = null, extraOptions = {}) {
   if (imageUrl) {
-    return bot.telegram.sendPhoto(chatId, imageUrl, buildPhotoExtra(text, keyboard));
+    return bot.telegram.sendPhoto(chatId, imageUrl, buildPhotoExtra(text, keyboard, extraOptions));
   }
 
+  const options = { ...extraOptions };
   if (keyboard?.reply_markup) {
-    return bot.telegram.sendMessage(chatId, text, { reply_markup: keyboard.reply_markup });
+    options.reply_markup = keyboard.reply_markup;
   }
 
-  return bot.telegram.sendMessage(chatId, text);
+  return bot.telegram.sendMessage(chatId, text, options);
 }
 
 async function editLiveMessage(chatId, messageId, imageUrl, text, keyboard = null) {
@@ -784,7 +801,7 @@ async function updateLiveMatchMessage(matchCode) {
       match.chat_id,
       match.live_message_id,
       WORLDCUP_IMAGE_URL,
-      buildMatchMessage(match, totals),
+      buildPublicMatchMessage(match, totals),
       buildGroupMatchKeyboard(match)
     );
   } catch (error) {
@@ -823,17 +840,21 @@ function startLiveMatchUpdater() {
 }
 
 async function createMatch(ctx, text) {
-  if (!(await requireAdmin(ctx))) return;
+  if (!(await requireAdminControlChat(ctx))) return;
 
-  if (!isGroupChat(ctx)) {
-    return ctx.reply("Please create matches inside the target Telegram group.");
+  if (!PUBLIC_GROUP_CHAT_ID) {
+    return ctx.reply("PUBLIC_GROUP_CHAT_ID is not configured. Please add the public group chat ID in Render Environment.");
+  }
+
+  if (!BOT_USERNAME) {
+    return ctx.reply("BOT_USERNAME is not configured. Please add the bot username in Render Environment.");
   }
 
   const cleaned = cleanCommandText(text);
-  const match = cleaned.match(/^\/worldcup_([A-Za-z0-9]+)_([A-Za-z0-9]+)_(\d+)_(\d+)_(\d+)_([0-9]+:[0-9]+)_([0-9]+:[0-9]+)_([A-Za-z0-9]+)$/i);
+  const match = cleaned.match(/^\/worldcup_([A-Za-z0-9]+)_([A-Za-z0-9]+)_(\d+)_(\d+)_(\d+)(?:_([0-9]+:[0-9]+)_([0-9]+:[0-9]+)_([A-Za-z0-9]+))?$/i);
 
   if (!match) {
-    return ctx.reply("Invalid format.\nExample: /worldcup_FRA_BRA_1_1_20_0:0_3:3_Others");
+    return ctx.reply("Invalid format.\nExample: /worldcup_FRA_BRA_0_0_30\nOptional: /worldcup_FRA_BRA_1_1_20_0:0_5:5_Others");
   }
 
   const teamA = normalizeTeam(match[1]);
@@ -841,10 +862,13 @@ async function createMatch(ctx, text) {
   const days = Number(match[3]);
   const hours = Number(match[4]);
   const minutes = Number(match[5]);
-  const selectionOptions = generateScoreOptions(match[6], match[7], match[8]);
+  const startScore = match[6] || "0:0";
+  const endScore = match[7] || "5:5";
+  const lastOption = match[8] || "Others";
+  const selectionOptions = generateScoreOptions(startScore, endScore, lastOption);
 
   if (!teamA || !teamB || teamA === teamB) {
-    return ctx.reply("Invalid teams. Example: /worldcup_FRA_BRA_1_1_20");
+    return ctx.reply("Invalid teams. Example: /worldcup_FRA_BRA_0_0_30");
   }
 
   if (
@@ -855,7 +879,7 @@ async function createMatch(ctx, text) {
     minutes > 59 ||
     days * 1440 + hours * 60 + minutes <= 0
   ) {
-    return ctx.reply("Invalid betting time. Example: /worldcup_FRA_BRA_1_1_20");
+    return ctx.reply("Invalid betting time. Example: /worldcup_FRA_BRA_0_0_30");
   }
 
   if (!selectionOptions || selectionOptions.length < 2) {
@@ -868,7 +892,7 @@ async function createMatch(ctx, text) {
 
   const payload = {
     match_code: matchCode,
-    chat_id: ctx.chat.id,
+    chat_id: Number(PUBLIC_GROUP_CHAT_ID),
     team_a: teamA,
     team_b: teamB,
     currency: DEFAULT_CURRENCY,
@@ -894,12 +918,24 @@ async function createMatch(ctx, text) {
   }
 
   const totals = await getMatchTotals(data.match_code, data);
-  const liveMessage = await replyWithOptionalPhoto(
-    ctx,
-    WORLDCUP_IMAGE_URL,
-    buildMatchMessage(data, totals),
-    buildGroupMatchKeyboard(data)
-  );
+  const topicOptions = PUBLIC_WORLD_CUP_TOPIC_ID
+    ? { message_thread_id: Number(PUBLIC_WORLD_CUP_TOPIC_ID) }
+    : {};
+
+  let liveMessage;
+  try {
+    liveMessage = await sendOptionalPhoto(
+      PUBLIC_GROUP_CHAT_ID,
+      WORLDCUP_IMAGE_URL,
+      buildPublicMatchMessage(data, totals),
+      buildGroupMatchKeyboard(data),
+      topicOptions
+    );
+  } catch (sendError) {
+    console.error("Send public match card error:", sendError);
+    await supabase.from("wc_matches").delete().eq("match_code", data.match_code);
+    return ctx.reply(`Failed to send match card to public group/topic: ${sendError.message}`);
+  }
 
   await supabase
     .from("wc_matches")
@@ -909,7 +945,7 @@ async function createMatch(ctx, text) {
     })
     .eq("match_code", data.match_code);
 
-  return ctx.reply(`✅ Match created: ${data.match_code}\n${formatTeamWithFlag(teamA)} vs ${formatTeamWithFlag(teamB)}\nBetting closes in ${days}d ${hours}h ${minutes}m.`);
+  return ctx.reply(`✅ Match created and posted to the World Cup topic.\n\nMatch ID: ${data.match_code}\nMatch: ${formatTeamWithFlag(teamA)} vs ${formatTeamWithFlag(teamB)}\nBetting closes in ${days}d ${hours}h ${minutes}m.`);
 }
 
 async function showWorldCupEntry(ctx) {
@@ -940,23 +976,18 @@ async function showOpenMatches(ctx) {
     );
   }
 
-  const keyboard = openMatches.map((match) => {
-    const url = getBetNowUrl(match.match_code);
-    const label = `${formatTeamWithFlag(match.team_a)} vs ${formatTeamWithFlag(match.team_b)}`;
+  const message = "Please use the World Cup topic and tap Vote Now to join the prediction in private chat.";
+  const sent = await ctx.reply(message);
 
-    if (url) {
-      return [Markup.button.url(label, url)];
-    }
+  if (ctx.chat?.id && ctx.message?.message_id) {
+    scheduleDeleteMessage(ctx.chat.id, ctx.message.message_id, 10000);
+  }
 
-    return [Markup.button.callback(label, `wcmatch:${match.match_code}`)];
-  });
+  if (ctx.chat?.id && sent?.message_id) {
+    scheduleDeleteMessage(ctx.chat.id, sent.message_id, 10000);
+  }
 
-  return replyWithOptionalPhoto(
-    ctx,
-    WORLDCUP_IMAGE_URL,
-    "Open matches are available. Tap a match to vote in private chat with the bot.",
-    Markup.inlineKeyboard(keyboard)
-  );
+  return sent;
 }
 
 async function startPrivateBet(ctx, matchCode) {
@@ -1134,8 +1165,7 @@ async function handleAmountInput(ctx, text, session) {
 
 ❗️Please transfer ${formatAmount(amount)} ${match.currency} via UEEx internal transfer to UID ${match.receiver_uid}.
 ❗️Transfer Remark: ${data.order_code}
-❗️Your vote will be counted after payment confirmation.
-❗️Admin backup command: /confirm_${data.order_code}_${formatAmount(amount)}`;
+❗️Your vote will be counted after payment confirmation.`;
 
   const pendingMessage = await replyWithOptionalPhoto(
     ctx,
@@ -1947,7 +1977,7 @@ User:
 /myvote - View my votes
 
 Admin:
-/worldcup_FRA_BRA_1_1_20_0:0_3:3_Others - Create match
+/worldcup_FRA_BRA_0_0_30 - Create match and post it to World Cup topic
 /confirm_O000123_1150 - Confirm payment
 /mockpay_O000123_1150 - Mock auto payment test
 /void_O000123 - Void order
