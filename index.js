@@ -18,7 +18,7 @@ const UID_MAX = Number(process.env.UID_MAX || 35000000);
 const RECEIVER_UID = process.env.RECEIVER_UID || "1234567";
 const DEFAULT_CURRENCY = process.env.DEFAULT_CURRENCY || "UE";
 const PLATFORM_FEE_BPS = Number(process.env.PLATFORM_FEE_BPS || 500);
-const MAX_OPEN_MATCHES_SHOWN = Number(process.env.MAX_OPEN_MATCHES_SHOWN || 20);
+const MAX_OPEN_MATCHES_SHOWN = Number(process.env.MAX_OPEN_MATCHES_SHOWN || 500);
 const LIVE_UPDATE_INTERVAL_MS = Number(process.env.LIVE_UPDATE_INTERVAL_MS || 30000);
 const MIN_BET_AMOUNT = new Decimal(process.env.MIN_BET_AMOUNT || 1000);
 const BOT_USERNAME = (process.env.BOT_USERNAME || "").replace(/^@/, "");
@@ -55,10 +55,40 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 app.use(express.json());
 
 const sessionStore = new Map();
+const privateMenuMessageStore = new Map();
 
 function getSessionKey(ctx) {
   return `${ctx.chat?.id || "unknown"}:${ctx.from?.id || "unknown"}`;
 }
+function getPrivateMenuKey(ctx) {
+  return `${ctx.chat?.id || "unknown"}:${ctx.from?.id || "unknown"}`;
+}
+
+async function deleteLastPrivateMenuMessage(ctx) {
+  if (!ctx || !isPrivateChat(ctx)) return;
+
+  const key = getPrivateMenuKey(ctx);
+  const messageId = privateMenuMessageStore.get(key);
+
+  if (!messageId) return;
+
+  try {
+    await ctx.telegram.deleteMessage(ctx.chat.id, messageId);
+  } catch (error) {
+    // Ignore delete failures, for example if the user already deleted the message.
+  } finally {
+    privateMenuMessageStore.delete(key);
+  }
+}
+
+function rememberPrivateMenuMessage(ctx, sentMessage) {
+  if (ctx && isPrivateChat(ctx) && sentMessage?.message_id) {
+    privateMenuMessageStore.set(getPrivateMenuKey(ctx), sentMessage.message_id);
+  }
+
+  return sentMessage;
+}
+
 
 function setSession(ctx, data) {
   sessionStore.set(getSessionKey(ctx), {
@@ -216,14 +246,14 @@ const TEAM_FLAG_MAP = {
   BIH: "🇧🇦", BRA: "🇧🇷", CAN: "🇨🇦", CHI: "🇨🇱", CHN: "🇨🇳",
   CIV: "🇨🇮", COD: "🇨🇩", COL: "🇨🇴", CPV: "🇨🇻", CRO: "🇭🇷",
   CUW: "🇨🇼", CZE: "🇨🇿", DEN: "🇩🇰", ECU: "🇪🇨", EGY: "🇪🇬",
-  ENG: "🏴", ESP: "🇪🇸", FRA: "🇫🇷", GER: "🇩🇪", GHA: "🇬🇭",
+  ENG: "🏴󠁧󠁢󠁥󠁮󠁧󠁿", ESP: "🇪🇸", FRA: "🇫🇷", GER: "🇩🇪", GHA: "🇬🇭",
   HAI: "🇭🇹", IRN: "🇮🇷", IRQ: "🇮🇶", ITA: "🇮🇹", JOR: "🇯🇴",
   JPN: "🇯🇵", KOR: "🇰🇷", KSA: "🇸🇦", MAR: "🇲🇦", MEX: "🇲🇽",
   NED: "🇳🇱", NGA: "🇳🇬", NOR: "🇳🇴", NZL: "🇳🇿", PAN: "🇵🇦",
   PAR: "🇵🇾", POL: "🇵🇱", POR: "🇵🇹", QAT: "🇶🇦", RUS: "🇷🇺",
-  SCO: "🏴", SEN: "🇸🇳", SRB: "🇷🇸", SUI: "🇨🇭", SWE: "🇸🇪",
+  SCO: "🏴󠁧󠁢󠁳󠁣󠁴󠁿", SEN: "🇸🇳", SRB: "🇷🇸", SUI: "🇨🇭", SWE: "🇸🇪",
   TUN: "🇹🇳", TUR: "🇹🇷", UKR: "🇺🇦", URU: "🇺🇾", USA: "🇺🇸",
-  UZB: "🇺🇿", WAL: "🏴", ZAF: "🇿🇦"
+  UZB: "🇺🇿", WAL: "🏴󠁧󠁢󠁷󠁬󠁳󠁿", ZAF: "🇿🇦"
 };
 
 function getTeamFlag(team) {
@@ -586,8 +616,9 @@ async function getAllOpenMatches() {
     .from("wc_matches")
     .select("*")
     .eq("status", "open")
-    .order("created_at", { ascending: false })
-    .limit(MAX_OPEN_MATCHES_SHOWN);
+    .order("match_date", { ascending: true })
+    .order("match_time", { ascending: true })
+    .limit(500);
 
   if (error) {
     throw new Error(`Failed to load matches: ${error.message}`);
@@ -624,13 +655,9 @@ function getMatchDayLabel(dateKey) {
   }
 
   const date = new Date(Date.UTC(parts[0], parts[1] - 1, parts[2]));
-  const formatted = new Intl.DateTimeFormat("en-US", {
-    weekday: "short",
-    month: "short",
-    day: "numeric"
-  }).format(date);
+  const weekday = new Intl.DateTimeFormat("en-US", { weekday: "short" }).format(date);
 
-  return `${formatted} (${dateKey})`;
+  return `${dateKey} • ${weekday}`;
 }
 
 function getMatchListButtonLabel(match) {
@@ -689,7 +716,7 @@ function getBetNowUrl(matchCode) {
 function getPrivateMainMenu() {
   return Markup.keyboard([
     ["⚽ Matches", "📊 My Vote"],
-    ["🛟 Support"]
+    ["📜 Rules", "🛟 Support"]
   ]).resize();
 }
 
@@ -697,6 +724,37 @@ function getSupportKeyboard() {
   return Markup.inlineKeyboard([
     [Markup.button.url("Contact @UEEx_JJ", "https://t.me/UEEx_JJ")]
   ]);
+}
+
+function buildRulesMessage() {
+  return `📜 World Cup Prediction Rules
+
+1. Tap Matches and select a match day, match, prediction type, exact score, and UE voting amount.
+2. Minimum voting amount: ${formatAmount(MIN_BET_AMOUNT)} UE.
+3. After creating a pending order, transfer the exact UE amount to UID ${UEEX_RECEIVER_UID}.
+4. Use your Order ID as the transfer remark. Orders are counted only after payment confirmation.
+5. If your transfer amount, UID, or remark is incorrect, your vote may not be confirmed automatically.
+6. After the match result is recorded, winning users share the net pool according to their confirmed voting amount.
+7. Platform fee: ${formatAmount(new Decimal(PLATFORM_FEE_BPS).div(100))}%.
+8. UEEx reserves the right to review abnormal activity, invalid payments, and final reward eligibility.`;
+}
+
+async function showRules(ctx) {
+  if (isPrivateChat(ctx)) {
+    await deleteLastPrivateMenuMessage(ctx);
+  }
+
+  const sent = await ctx.reply(buildRulesMessage(), getPrivateMainMenu());
+  return rememberPrivateMenuMessage(ctx, sent);
+}
+
+async function showSupport(ctx) {
+  if (isPrivateChat(ctx)) {
+    await deleteLastPrivateMenuMessage(ctx);
+  }
+
+  const sent = await ctx.reply("🛟 Need help? Contact UEEx support below.", getSupportKeyboard());
+  return rememberPrivateMenuMessage(ctx, sent);
 }
 
 function buildGroupMatchKeyboard(match) {
@@ -834,6 +892,21 @@ async function sendOptionalPhoto(chatId, imageUrl, text, keyboard = null, extraO
 
   return bot.telegram.sendMessage(chatId, text, options);
 }
+async function notifyPublicWorldCupTopic(text, imageUrl = "") {
+  if (!PUBLIC_GROUP_CHAT_ID) return null;
+
+  const topicOptions = PUBLIC_WORLD_CUP_TOPIC_ID
+    ? { message_thread_id: Number(PUBLIC_WORLD_CUP_TOPIC_ID) }
+    : {};
+
+  try {
+    return await sendOptionalPhoto(PUBLIC_GROUP_CHAT_ID, imageUrl, text, null, topicOptions);
+  } catch (error) {
+    console.error("Failed to notify public World Cup topic:", error.message);
+    return null;
+  }
+}
+
 
 async function editLiveMessage(chatId, messageId, imageUrl, text, keyboard = null) {
   if (imageUrl) {
@@ -1068,12 +1141,17 @@ async function showOpenMatches(ctx) {
 }
 
 async function showMatchDateSelection(ctx, edit = false) {
+  if (!edit && isPrivateChat(ctx)) {
+    await deleteLastPrivateMenuMessage(ctx);
+  }
+
   const matches = sortMatchesBySchedule((await getAllOpenMatches()).filter(isBettingOpen));
 
   if (!matches.length) {
     const message = "No open World Cup prediction matches are available now.";
     if (edit) return editCallbackMessage(ctx, message, null);
-    return ctx.reply(message, getPrivateMainMenu());
+    const sent = await ctx.reply(message, getPrivateMainMenu());
+    return rememberPrivateMenuMessage(ctx, sent);
   }
 
   const seen = new Set();
@@ -1087,7 +1165,7 @@ async function showMatchDateSelection(ctx, edit = false) {
     const count = matches.filter((item) => getMatchDateKey(item) === dateKey).length;
     rows.push([
       Markup.button.callback(
-        `📅 ${getMatchDayLabel(dateKey)} • ${count} match${count > 1 ? "es" : ""}`,
+        `${getMatchDayLabel(dateKey)} • ${count} match${count > 1 ? "es" : ""}`,
         `wcdate:${encodeDateKey(dateKey)}`
       )
     ]);
@@ -1100,7 +1178,8 @@ async function showMatchDateSelection(ctx, edit = false) {
     return editCallbackMessage(ctx, text, keyboard);
   }
 
-  return replyWithOptionalPhoto(ctx, WORLDCUP_IMAGE_URL, text, keyboard);
+  const sent = await replyWithOptionalPhoto(ctx, WORLDCUP_IMAGE_URL, text, keyboard);
+  return rememberPrivateMenuMessage(ctx, sent);
 }
 
 async function showMatchesForDate(ctx, dateKey, edit = false) {
@@ -1490,6 +1569,15 @@ async function confirmOrderByCode(ctx, orderCode, amount, options = {}) {
 🔸 Selection: ${formatSelectionWithFlags(matchData, order.selection)}
 🔸 Confirmed Amount: ${formatAmount(amount)} ${matchData.currency}
 🔸 User Notified: ${userNotified ? "yes" : "no"}`, ctx);
+
+  const updatedTotals = await getMatchTotals(order.match_code, matchData);
+  await notifyPublicWorldCupTopic(`✅ Order Confirmed
+
+⚽️ ${formatTeamWithFlag(matchData.team_a)} vs ${formatTeamWithFlag(matchData.team_b)}
+🔸 Selection: ${formatSelectionWithFlags(matchData, order.selection)}
+🔸 Amount: ${formatAmount(amount)} ${matchData.currency}
+
+🎉Total Pool: ${formatAmount(getTotalPool(updatedTotals))} ${matchData.currency}`, ORDER_CONFIRMED_IMAGE_URL);
 
   return ctx.reply(`✅ Order confirmed: ${orderCode}
 UID: ${order.ueex_uid}
@@ -2007,6 +2095,10 @@ function calculateOrderPnl(order, match, stats) {
 }
 
 async function showMyVote(ctx) {
+  if (isPrivateChat(ctx)) {
+    await deleteLastPrivateMenuMessage(ctx);
+  }
+
   const { data: orders, error } = await supabase
     .from("wc_orders")
     .select("*")
@@ -2015,11 +2107,13 @@ async function showMyVote(ctx) {
     .limit(20);
 
   if (error) {
-    return ctx.reply(`Failed to load your votes: ${error.message}`);
+    const sent = await ctx.reply(`Failed to load your votes: ${error.message}`);
+    return rememberPrivateMenuMessage(ctx, sent);
   }
 
   if (!orders || orders.length === 0) {
-    return ctx.reply("You have no World Cup prediction orders yet.");
+    const sent = await ctx.reply("You have no World Cup prediction orders yet.");
+    return rememberPrivateMenuMessage(ctx, sent);
   }
 
   const matchCodes = [...new Set(orders.map((order) => order.match_code))];
@@ -2030,7 +2124,8 @@ async function showMyVote(ctx) {
     .in("match_code", matchCodes);
 
   if (matchError) {
-    return ctx.reply(`Failed to load matches: ${matchError.message}`);
+    const sent = await ctx.reply(`Failed to load matches: ${matchError.message}`);
+    return rememberPrivateMenuMessage(ctx, sent);
   }
 
   const confirmedOrders = await getConfirmedOrdersForMatches(matchCodes);
@@ -2058,9 +2153,10 @@ async function showMyVote(ctx) {
 🔸 Total PnL: ${pnl}`;
   });
 
-  return ctx.reply(`📊 My Votes
+  const sent = await ctx.reply(`📊 My Votes
 
-${lines.join("\n\n")}`);
+${lines.join("\n\n")}`, getPrivateMainMenu());
+  return rememberPrivateMenuMessage(ctx, sent);
 }
 
 async function showPendingOrders(ctx, matchCode = null) {
@@ -2402,9 +2498,14 @@ bot.on("message", async (ctx) => {
       return showMatchDateSelection(ctx);
     }
 
-    if (isPrivateChat(ctx) && ["🛟 Support", "Support", "support"].includes(cleaned)) {
+    if (isPrivateChat(ctx) && ["📜 Rules", "Rules", "rules", "Rule", "rule"].includes(cleaned)) {
       clearSession(ctx);
-      return ctx.reply("Need help? Contact UEEx support below.", getSupportKeyboard());
+      return showRules(ctx);
+    }
+
+    if (isPrivateChat(ctx) && ["🛟 Support", "Support", "support", "Help", "help"].includes(cleaned)) {
+      clearSession(ctx);
+      return showSupport(ctx);
     }
 
     if (isPrivateChat(ctx) && ["📊 My Vote", "My Vote", "my vote", "My Votes", "my votes"].includes(cleaned)) {
