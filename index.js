@@ -72,14 +72,14 @@ const privateMenuMessageStore = new Map();
 function getSessionKey(ctx) {
   return `${ctx.chat?.id || "unknown"}:${ctx.from?.id || "unknown"}`;
 }
-function getPrivateMenuKey(ctx) {
-  return `${ctx.chat?.id || "unknown"}:${ctx.from?.id || "unknown"}`;
+function getPrivateMenuKey(ctx, category = "default") {
+  return `${ctx.chat?.id || "unknown"}:${ctx.from?.id || "unknown"}:${category}`;
 }
 
-async function deleteLastPrivateMenuMessage(ctx) {
+async function deleteLastPrivateMenuMessage(ctx, category = "default") {
   if (!ctx || !isPrivateChat(ctx)) return;
 
-  const key = getPrivateMenuKey(ctx);
+  const key = getPrivateMenuKey(ctx, category);
   const messageId = privateMenuMessageStore.get(key);
 
   if (!messageId) return;
@@ -93,9 +93,9 @@ async function deleteLastPrivateMenuMessage(ctx) {
   }
 }
 
-function rememberPrivateMenuMessage(ctx, sentMessage) {
+function rememberPrivateMenuMessage(ctx, sentMessage, category = "default") {
   if (ctx && isPrivateChat(ctx) && sentMessage?.message_id) {
-    privateMenuMessageStore.set(getPrivateMenuKey(ctx), sentMessage.message_id);
+    privateMenuMessageStore.set(getPrivateMenuKey(ctx, category), sentMessage.message_id);
   }
 
   return sentMessage;
@@ -774,9 +774,7 @@ function getSupportKeyboard() {
 }
 
 function buildRulesMessage() {
-  return `📜 World Cup Prediction Rules
-
-1. Tap Matches and select a match day, match, prediction type, exact score, and UE voting amount.
+  return `1. Tap Matches and select a match day, match, prediction type, exact score, and UE voting amount.
 2. Minimum voting amount: ${formatAmount(MIN_BET_AMOUNT)} UE.
 3. After creating a pending order, transfer the exact UE amount to UID ${UEEX_RECEIVER_UID}.
 4. Use your Order ID as the transfer remark. Orders are counted only after payment confirmation.
@@ -788,16 +786,17 @@ function buildRulesMessage() {
 
 async function showRules(ctx) {
   if (isPrivateChat(ctx)) {
-    await deleteLastPrivateMenuMessage(ctx);
+    await deleteLastPrivateMenuMessage(ctx, "rules");
   }
 
   const sent = await replyWithOptionalPhoto(ctx, RULES_IMAGE_URL, buildRulesMessage(), getPrivateMainMenu());
-  return rememberPrivateMenuMessage(ctx, sent);
+  return rememberPrivateMenuMessage(ctx, sent, "rules");
 }
+
 
 async function showSupport(ctx) {
   if (isPrivateChat(ctx)) {
-    await deleteLastPrivateMenuMessage(ctx);
+    await deleteLastPrivateMenuMessage(ctx, "support");
   }
 
   const sent = await replyWithOptionalPhoto(
@@ -806,8 +805,9 @@ async function showSupport(ctx) {
     "🛟 Need help? Contact @UEEx_JJ for support.",
     getPrivateMainMenu()
   );
-  return rememberPrivateMenuMessage(ctx, sent);
+  return rememberPrivateMenuMessage(ctx, sent, "support");
 }
+
 
 function buildGroupMatchKeyboard(match) {
   const url = getBetNowUrl(match.match_code);
@@ -1200,7 +1200,7 @@ async function showOpenMatches(ctx) {
 
 async function showMatchDateSelection(ctx, edit = false) {
   if (!edit && isPrivateChat(ctx)) {
-    await deleteLastPrivateMenuMessage(ctx);
+    await deleteLastPrivateMenuMessage(ctx, "matches");
   }
 
   const matches = sortMatchesBySchedule((await getAllOpenMatches()).filter(isBettingOpen));
@@ -1209,7 +1209,7 @@ async function showMatchDateSelection(ctx, edit = false) {
     const message = "No open World Cup prediction matches are available now.";
     if (edit) return editCallbackMessage(ctx, message, null);
     const sent = await ctx.reply(message, getPrivateMainMenu());
-    return rememberPrivateMenuMessage(ctx, sent);
+    return rememberPrivateMenuMessage(ctx, sent, "matches");
   }
 
   const seen = new Set();
@@ -1229,7 +1229,9 @@ async function showMatchDateSelection(ctx, edit = false) {
     ]);
   }
 
-  const text = "🏆 Upcoming Matches\n\nPlease select a match day:";
+  const text = `🏆 Upcoming Matches
+
+Please select a match day:`;
   const keyboard = Markup.inlineKeyboard(rows);
 
   if (edit) {
@@ -1237,8 +1239,9 @@ async function showMatchDateSelection(ctx, edit = false) {
   }
 
   const sent = await replyWithOptionalPhoto(ctx, WORLDCUP_IMAGE_URL, text, keyboard);
-  return rememberPrivateMenuMessage(ctx, sent);
+  return rememberPrivateMenuMessage(ctx, sent, "matches");
 }
+
 
 async function showMatchesForDate(ctx, dateKey, edit = false) {
   const matches = sortMatchesBySchedule(
@@ -1595,6 +1598,7 @@ async function confirmOrderByCode(ctx, orderCode, amount, options = {}) {
 
   const confirmedMessageText = `⚽️ Match: ${formatTeamWithFlag(matchData.team_a)} vs ${formatTeamWithFlag(matchData.team_b)}
 
+🔸 Match ID: ${matchData.match_code}
 🔸 Order ID: ${orderCode}
 🔸 UID: ${order.ueex_uid}
 🔸 TG: ${getTelegramUserLabel(order)}
@@ -1616,6 +1620,7 @@ async function confirmOrderByCode(ctx, orderCode, amount, options = {}) {
 
 ⚽️ Match: ${formatTeamWithFlag(matchData.team_a)} vs ${formatTeamWithFlag(matchData.team_b)}
 
+🔸 Match ID: ${matchData.match_code}
 🔸 Order ID: ${orderCode}
 🔸 UID: ${order.ueex_uid}
 🔸 TG: ${getTelegramUserLabel(order)}
@@ -1627,6 +1632,7 @@ async function confirmOrderByCode(ctx, orderCode, amount, options = {}) {
   await notifyPublicWorldCupTopic(`✅ Order Confirmed
 
 ⚽️ ${formatTeamWithFlag(matchData.team_a)} vs ${formatTeamWithFlag(matchData.team_b)}
+🔸 Match ID: ${matchData.match_code}
 🔸 Selection: ${formatSelectionWithFlags(matchData, order.selection)}
 🔸 Amount: ${formatAmount(amount)} ${matchData.currency}
 🔸 User: ${getTelegramUserLabel(order)}
@@ -2064,6 +2070,7 @@ function buildSettlementPublicMessage(matchData, settlement) {
   return `🏆 Match Settled
 
 ⚽️ ${formatTeamWithFlag(matchData.team_a)} vs ${formatTeamWithFlag(matchData.team_b)}
+🔸 Match ID: ${matchData.match_code}
 🔸 Result: ${formatSelectionWithFlags(matchData, settlement.result)}
 
 💰 Total Pool: ${formatAmount(settlement.totalPool)} ${matchData.currency}
@@ -2153,8 +2160,8 @@ async function notifyPublicWorldCupTopicLong(text) {
   if (!PUBLIC_GROUP_CHAT_ID) return null;
 
   const topicOptions = PUBLIC_WORLD_CUP_TOPIC_ID
-    ? { message_thread_id: Number(PUBLIC_WORLD_CUP_TOPIC_ID) }
-    : {};
+    ? { message_thread_id: Number(PUBLIC_WORLD_CUP_TOPIC_ID), disable_web_page_preview: true }
+    : { disable_web_page_preview: true };
 
   let lastMessage = null;
   for (const chunk of splitLongMessage(text)) {
@@ -2162,11 +2169,20 @@ async function notifyPublicWorldCupTopicLong(text) {
       lastMessage = await bot.telegram.sendMessage(PUBLIC_GROUP_CHAT_ID, chunk, topicOptions);
     } catch (error) {
       console.error("Failed to send public settlement chunk:", error.message);
+
+      if (topicOptions.message_thread_id) {
+        try {
+          lastMessage = await bot.telegram.sendMessage(PUBLIC_GROUP_CHAT_ID, chunk, { disable_web_page_preview: true });
+        } catch (fallbackError) {
+          console.error("Failed to send public settlement fallback:", fallbackError.message);
+        }
+      }
     }
   }
 
   return lastMessage;
 }
+
 
 async function notifySettlementUsers(matchData, orders, settlement) {
   const payoutByOrderKey = new Map();
@@ -2335,9 +2351,12 @@ async function settleMatch(ctx, text) {
   const adminMessage = buildSettlementCompletedAdminMessage(matchData, settlement);
   const publicMessage = buildSettlementPublicMessage(matchData, settlement);
 
-  await notifyPublicWorldCupTopicLong(publicMessage);
+  const publicNotifyResult = await notifyPublicWorldCupTopicLong(publicMessage);
+  const adminFinalMessage = `${adminMessage}
 
-  return replyLongMessage(ctx, adminMessage);
+Public Topic Notification: ${publicNotifyResult ? "sent" : "failed or not configured"}`;
+
+  return replyLongMessage(ctx, adminFinalMessage);
 }
 
 function getMatchResultDisplay(match) {
@@ -2406,27 +2425,33 @@ function buildMatchStatsMap(matches, confirmedOrders) {
   return map;
 }
 
-function calculateOrderPnl(order, match, stats) {
-  if (!match || order.status !== "confirmed" || !match.result) return "-";
+function calculateOrderPnlValue(order, match, stats) {
+  if (!match || order.status !== "confirmed" || !match.result) return null;
 
   const amount = new Decimal(order.confirmed_amount || 0);
 
   if (order.selection !== match.result) {
-    return `-${formatAmount(amount)} ${order.currency}`;
+    return amount.negated();
   }
 
-  if (!stats || !stats.winningPool || stats.winningPool.lte(0)) return "-";
+  if (!stats || !stats.winningPool || stats.winningPool.lte(0)) return null;
 
   const payout = amount.div(stats.winningPool).mul(stats.netPool);
-  const pnl = payout.minus(amount);
-  const sign = pnl.gte(0) ? "+" : "";
+  return payout.minus(amount);
+}
 
+function calculateOrderPnl(order, match, stats) {
+  const pnl = calculateOrderPnlValue(order, match, stats);
+  if (!pnl) return "-";
+
+  const sign = pnl.gte(0) ? "+" : "";
   return `${sign}${formatAmount(pnl)} ${order.currency}`;
 }
 
+
 async function showMyVote(ctx) {
   if (isPrivateChat(ctx)) {
-    await deleteLastPrivateMenuMessage(ctx);
+    await deleteLastPrivateMenuMessage(ctx, "myvote");
   }
 
   const { data: orders, error } = await supabase
@@ -2437,13 +2462,13 @@ async function showMyVote(ctx) {
     .limit(20);
 
   if (error) {
-    const sent = await ctx.reply(`Failed to load your votes: ${error.message}`);
-    return rememberPrivateMenuMessage(ctx, sent);
+    const sent = await ctx.reply(`Failed to load your votes: ${error.message}`, getPrivateMainMenu());
+    return rememberPrivateMenuMessage(ctx, sent, "myvote");
   }
 
   if (!orders || orders.length === 0) {
-    const sent = await ctx.reply("You have no World Cup prediction orders yet.");
-    return rememberPrivateMenuMessage(ctx, sent);
+    const sent = await ctx.reply("You have no World Cup prediction orders yet.", getPrivateMainMenu());
+    return rememberPrivateMenuMessage(ctx, sent, "myvote");
   }
 
   const matchCodes = [...new Set(orders.map((order) => order.match_code))];
@@ -2454,13 +2479,17 @@ async function showMyVote(ctx) {
     .in("match_code", matchCodes);
 
   if (matchError) {
-    const sent = await ctx.reply(`Failed to load matches: ${matchError.message}`);
-    return rememberPrivateMenuMessage(ctx, sent);
+    const sent = await ctx.reply(`Failed to load matches: ${matchError.message}`, getPrivateMainMenu());
+    return rememberPrivateMenuMessage(ctx, sent, "myvote");
   }
 
   const confirmedOrders = await getConfirmedOrdersForMatches(matchCodes);
   const matchMap = new Map((matches || []).map((match) => [match.match_code, match]));
   const statsMap = buildMatchStatsMap(matches || [], confirmedOrders);
+
+  let totalVoteAmount = new Decimal(0);
+  let totalPnlAmount = new Decimal(0);
+  let hasSettledPnl = false;
 
   const lines = orders.map((order, index) => {
     const match = matchMap.get(order.match_code);
@@ -2468,12 +2497,24 @@ async function showMyVote(ctx) {
     const matchTitle = match ? `${formatTeamWithFlag(match.team_a)} vs ${formatTeamWithFlag(match.team_b)}` : order.match_code;
     const selection = match ? formatSelectionWithFlags(match, order.selection) : order.selection;
     const amount = order.status === "confirmed" ? order.confirmed_amount : order.expected_amount;
+    const amountDecimal = new Decimal(amount || 0);
     const totalPool = stats ? stats.totalPool : new Decimal(0);
     const resultDisplay = getMatchResultDisplay(match);
     const pnl = calculateOrderPnl(order, match, stats);
+    const pnlValue = calculateOrderPnlValue(order, match, stats);
     const orderStatus = order.status === "confirmed" ? "Confirmed" : order.status === "pending" ? "Pending" : order.status;
 
+    if (["pending", "confirmed"].includes(order.status)) {
+      totalVoteAmount = totalVoteAmount.plus(amountDecimal);
+    }
+
+    if (pnlValue) {
+      totalPnlAmount = totalPnlAmount.plus(pnlValue);
+      hasSettledPnl = true;
+    }
+
     return `${index + 1}. ${matchTitle}
+🔸 Match ID: ${order.match_code}
 🔸 Order: ${order.order_code}
 🔸 Selection: ${selection}
 🔸 Amount: ${formatAmount(amount)} ${order.currency}
@@ -2483,16 +2524,23 @@ async function showMyVote(ctx) {
 🔸 Total PnL: ${pnl}`;
   });
 
+  const currency = orders[0]?.currency || DEFAULT_CURRENCY;
+  const totalPnlText = hasSettledPnl
+    ? `${totalPnlAmount.gte(0) ? "+" : ""}${formatAmount(totalPnlAmount)} ${currency}`
+    : `0 ${currency}`;
+
   const sent = await replyWithOptionalPhoto(
     ctx,
     MYVOTE_IMAGE_URL,
-    `📊 My Votes
+    `${lines.join("\n\n")}
 
-${lines.join("\n\n")}`,
+💰 Total Vote Amount: ${formatAmount(totalVoteAmount)} ${currency}
+💎 Total PnL: ${totalPnlText}`,
     getPrivateMainMenu()
   );
-  return rememberPrivateMenuMessage(ctx, sent);
+  return rememberPrivateMenuMessage(ctx, sent, "myvote");
 }
+
 
 async function showPendingOrders(ctx, matchCode = null) {
   if (!(await requireAdminControlChat(ctx))) return;
@@ -2592,9 +2640,7 @@ bot.start(async (ctx) => {
 
   if (isPrivateChat(ctx)) {
     clearSession(ctx);
-    await deleteLastPrivateMenuMessage(ctx);
-    const sent = await replyWithOptionalPhoto(ctx, WELCOME_IMAGE_URL, buildWelcomeMessage(), getPrivateMainMenu());
-    return rememberPrivateMenuMessage(ctx, sent);
+    return replyWithOptionalPhoto(ctx, WELCOME_IMAGE_URL, buildWelcomeMessage(), getPrivateMainMenu());
   }
 
   return ctx.reply("Please open private chat with the bot to join World Cup Prediction.");
