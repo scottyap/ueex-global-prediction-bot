@@ -43,6 +43,16 @@ const SUPPORT_IMAGE_URL =
 const MYVOTE_IMAGE_URL =
   process.env.MYVOTE_IMAGE_URL ||
   "https://i.ibb.co/C3MxB9zh/Chat-GPT-Image-Jun-5-2026-10-48-46-AM-3.png";
+const WINNER_IMAGE_URL =
+  process.env.WINNER_IMAGE_URL ||
+  "https://i.ibb.co/nqpCFgCQ/Chat-GPT-Image-Jun-5-2026-06-06-09-PM-2.png";
+const LOSER_IMAGE_URL =
+  process.env.LOSER_IMAGE_URL ||
+  "https://i.ibb.co/fdhXY8xh/Chat-GPT-Image-Jun-5-2026-06-06-09-PM-1.png";
+const MATCH_SETTLED_IMAGE_URL =
+  process.env.MATCH_SETTLED_IMAGE_URL ||
+  "https://i.ibb.co/fzfJTNWb/Chat-GPT-Image-Jun-5-2026-06-08-57-PM.png";
+const TELEGRAM_CAPTION_SAFE_LIMIT = 900;
 const ADMIN_GROUP_CHAT_ID = process.env.ADMIN_GROUP_CHAT_ID || "";
 const PUBLIC_GROUP_CHAT_ID = process.env.PUBLIC_GROUP_CHAT_ID || process.env.PUBLIC_CHAT_ID || "";
 const PUBLIC_WORLD_CUP_TOPIC_ID = process.env.PUBLIC_WORLD_CUP_TOPIC_ID || process.env.WORLD_CUP_TOPIC_ID || "";
@@ -80,17 +90,21 @@ async function deleteLastPrivateMenuMessage(ctx, category = "default") {
   if (!ctx || !isPrivateChat(ctx)) return;
 
   const key = getPrivateMenuKey(ctx, category);
-  const messageId = privateMenuMessageStore.get(key);
+  const stored = privateMenuMessageStore.get(key);
 
-  if (!messageId) return;
+  if (!stored) return;
 
-  try {
-    await ctx.telegram.deleteMessage(ctx.chat.id, messageId);
-  } catch (error) {
-    // Ignore delete failures, for example if the user already deleted the message.
-  } finally {
-    privateMenuMessageStore.delete(key);
+  const messageIds = Array.isArray(stored) ? stored : [stored];
+
+  for (const messageId of messageIds) {
+    try {
+      await ctx.telegram.deleteMessage(ctx.chat.id, messageId);
+    } catch (error) {
+      // Ignore delete failures, for example if the user already deleted the message.
+    }
   }
+
+  privateMenuMessageStore.delete(key);
 }
 
 function rememberPrivateMenuMessage(ctx, sentMessage, category = "default") {
@@ -99,6 +113,20 @@ function rememberPrivateMenuMessage(ctx, sentMessage, category = "default") {
   }
 
   return sentMessage;
+}
+
+function rememberPrivateMenuMessages(ctx, sentMessages, category = "default") {
+  if (ctx && isPrivateChat(ctx)) {
+    const ids = (sentMessages || [])
+      .map((message) => message?.message_id)
+      .filter(Boolean);
+
+    if (ids.length) {
+      privateMenuMessageStore.set(getPrivateMenuKey(ctx, category), ids);
+    }
+  }
+
+  return sentMessages?.[sentMessages.length - 1] || null;
 }
 
 
@@ -926,8 +954,19 @@ function buildPhotoExtra(caption, keyboard = null, extraOptions = {}) {
 }
 
 async function replyWithOptionalPhoto(ctx, imageUrl, text, keyboard = null, extraOptions = {}) {
+  const safeText = String(text || "");
+
+  if (imageUrl && safeText.length <= TELEGRAM_CAPTION_SAFE_LIMIT) {
+    return ctx.replyWithPhoto(imageUrl, buildPhotoExtra(safeText, keyboard, extraOptions));
+  }
+
   if (imageUrl) {
-    return ctx.replyWithPhoto(imageUrl, buildPhotoExtra(text, keyboard, extraOptions));
+    const photoExtra = { ...extraOptions };
+    if (keyboard?.reply_markup) {
+      photoExtra.reply_markup = keyboard.reply_markup;
+    }
+
+    await ctx.replyWithPhoto(imageUrl, photoExtra);
   }
 
   const options = { ...extraOptions };
@@ -935,12 +974,23 @@ async function replyWithOptionalPhoto(ctx, imageUrl, text, keyboard = null, extr
     options.reply_markup = keyboard.reply_markup;
   }
 
-  return ctx.reply(text, options);
+  return ctx.reply(safeText, options);
 }
 
 async function sendOptionalPhoto(chatId, imageUrl, text, keyboard = null, extraOptions = {}) {
+  const safeText = String(text || "");
+
+  if (imageUrl && safeText.length <= TELEGRAM_CAPTION_SAFE_LIMIT) {
+    return bot.telegram.sendPhoto(chatId, imageUrl, buildPhotoExtra(safeText, keyboard, extraOptions));
+  }
+
   if (imageUrl) {
-    return bot.telegram.sendPhoto(chatId, imageUrl, buildPhotoExtra(text, keyboard, extraOptions));
+    const photoExtra = { ...extraOptions };
+    if (keyboard?.reply_markup) {
+      photoExtra.reply_markup = keyboard.reply_markup;
+    }
+
+    await bot.telegram.sendPhoto(chatId, imageUrl, photoExtra);
   }
 
   const options = { ...extraOptions };
@@ -948,7 +998,7 @@ async function sendOptionalPhoto(chatId, imageUrl, text, keyboard = null, extraO
     options.reply_markup = keyboard.reply_markup;
   }
 
-  return bot.telegram.sendMessage(chatId, text, options);
+  return bot.telegram.sendMessage(chatId, safeText, options);
 }
 async function notifyPublicWorldCupTopic(text, imageUrl = "") {
   if (!PUBLIC_GROUP_CHAT_ID) return null;
@@ -1006,6 +1056,7 @@ async function updateLiveMatchMessage(matchCode) {
 
   if (!match || !match.live_message_id || !match.chat_id) return;
 
+  await autoVoidExpiredPendingOrders(match);
   const totals = await getMatchTotals(matchCode, match);
 
   try {
@@ -1021,6 +1072,78 @@ async function updateLiveMatchMessage(matchCode) {
       console.error("Update live match message error:", error.message);
     }
   }
+}
+
+async function autoVoidExpiredPendingOrders(matchInput) {
+  const match = typeof matchInput === "string" ? await getMatch(matchInput) : matchInput;
+
+  if (!match || new Date(match.betting_end_at).getTime() > Date.now()) {
+    return 0;
+  }
+
+  const { data: orders, error } = await supabase
+    .from("wc_orders")
+    .select("*")
+    .eq("match_code", match.match_code)
+    .eq("status", "pending");
+
+  if (error) {
+    console.error("Auto-void load pending orders error:", error.message);
+    return 0;
+  }
+
+  if (!orders || orders.length === 0) return 0;
+
+  const orderCodes = orders.map((order) => order.order_code);
+  const now = new Date().toISOString();
+
+  const { error: updateError } = await supabase
+    .from("wc_orders")
+    .update({
+      status: "voided",
+      voided_at: now,
+      auto_confirm_error: "Auto-voided after betting time ended",
+      updated_at: now
+    })
+    .in("order_code", orderCodes);
+
+  if (updateError) {
+    console.error("Auto-void pending orders error:", updateError.message);
+    return 0;
+  }
+
+  for (const order of orders) {
+    if (order.pending_chat_id && order.pending_message_id) {
+      try {
+        await bot.telegram.deleteMessage(order.pending_chat_id, order.pending_message_id);
+      } catch (error) {
+        // Ignore delete failures.
+      }
+    }
+
+    try {
+      await sendOptionalPhoto(
+        order.telegram_id,
+        LOSER_IMAGE_URL,
+        `⚽️ Match: ${formatTeamWithFlag(match.team_a)} vs ${formatTeamWithFlag(match.team_b)}
+🔸 Match ID: ${match.match_code}
+🔸 Order ID: ${order.order_code}
+🔸 Amount: ${formatAmount(order.expected_amount)} ${match.currency}
+
+This pending order was automatically voided because betting time ended before payment confirmation.`
+      );
+    } catch (error) {
+      console.error(`Failed to notify auto-voided order ${order.order_code}:`, error.message);
+    }
+  }
+
+  await notifyAdminGroup(`⏰ Auto-voided ${orders.length} pending order(s) after betting time ended.
+
+Match: ${formatTeamWithFlag(match.team_a)} vs ${formatTeamWithFlag(match.team_b)}
+Match ID: ${match.match_code}
+Orders: ${orderCodes.join(", ")}`);
+
+  return orders.length;
 }
 
 async function updateAllLiveOpenMatches() {
@@ -1477,10 +1600,7 @@ async function handleAmountInput(ctx, text, session) {
 🔸 Remark: ${data.order_code}
 
 Confirm:
-/confirm_${data.order_code}_${formatAmountForCommand(amount)}
-
-Void:
-/void_${data.order_code}`);
+/confirm_${data.order_code}_${formatAmountForCommand(amount)}`);
 
   return pendingMessage;
 }
@@ -2067,9 +2187,7 @@ function buildSettlementPublicMessage(matchData, settlement) {
    Payout: ${formatAmount(payout.payoutAmount)} ${matchData.currency}`;
   });
 
-  return `🏆 Match Settled
-
-⚽️ ${formatTeamWithFlag(matchData.team_a)} vs ${formatTeamWithFlag(matchData.team_b)}
+  return `⚽️ ${formatTeamWithFlag(matchData.team_a)} vs ${formatTeamWithFlag(matchData.team_b)}
 🔸 Match ID: ${matchData.match_code}
 🔸 Result: ${formatSelectionWithFlags(matchData, settlement.result)}
 
@@ -2089,9 +2207,7 @@ function buildWinningUserSettlementMessage(matchData, order, payout) {
   const pnl = payout.payoutAmount.minus(voteAmount);
   const pnlSign = pnl.gte(0) ? "+" : "";
 
-  return `🎉 Congratulations! You won.
-
-⚽️ Match: ${formatTeamWithFlag(matchData.team_a)} vs ${formatTeamWithFlag(matchData.team_b)}
+  return `⚽️ Match: ${formatTeamWithFlag(matchData.team_a)} vs ${formatTeamWithFlag(matchData.team_b)}
 🔸 Result: ${formatSelectionWithFlags(matchData, matchData.result)}
 🔸 Your Selection: ${formatSelectionWithFlags(matchData, order.selection)}
 🔸 Your Vote: ${formatAmount(voteAmount)} ${matchData.currency}
@@ -2105,9 +2221,7 @@ function buildLosingUserSettlementMessage(matchData, order, noWinnerMode = false
   const voteAmount = new Decimal(order.confirmed_amount || 0);
 
   if (noWinnerMode) {
-    return `Match Settled
-
-⚽️ Match: ${formatTeamWithFlag(matchData.team_a)} vs ${formatTeamWithFlag(matchData.team_b)}
+    return `⚽️ Match: ${formatTeamWithFlag(matchData.team_a)} vs ${formatTeamWithFlag(matchData.team_b)}
 🔸 Result: ${formatSelectionWithFlags(matchData, matchData.result)}
 🔸 Your Selection: ${formatSelectionWithFlags(matchData, order.selection)}
 🔸 Your Vote: ${formatAmount(voteAmount)} ${matchData.currency}
@@ -2115,9 +2229,7 @@ function buildLosingUserSettlementMessage(matchData, order, noWinnerMode = false
 No exact-score winners were found. UEEx will review this match manually.`;
   }
 
-  return `Match Settled
-
-⚽️ Match: ${formatTeamWithFlag(matchData.team_a)} vs ${formatTeamWithFlag(matchData.team_b)}
+  return `⚽️ Match: ${formatTeamWithFlag(matchData.team_a)} vs ${formatTeamWithFlag(matchData.team_b)}
 🔸 Result: ${formatSelectionWithFlags(matchData, matchData.result)}
 🔸 Your Selection: ${formatSelectionWithFlags(matchData, order.selection)}
 🔸 Your Vote: ${formatAmount(voteAmount)} ${matchData.currency}
@@ -2156,7 +2268,7 @@ async function replyLongMessage(ctx, text) {
   return lastMessage;
 }
 
-async function notifyPublicWorldCupTopicLong(text) {
+async function notifyPublicWorldCupTopicLong(text, imageUrl = "") {
   if (!PUBLIC_GROUP_CHAT_ID) return null;
 
   const topicOptions = PUBLIC_WORLD_CUP_TOPIC_ID
@@ -2164,6 +2276,23 @@ async function notifyPublicWorldCupTopicLong(text) {
     : { disable_web_page_preview: true };
 
   let lastMessage = null;
+
+  if (imageUrl) {
+    try {
+      lastMessage = await bot.telegram.sendPhoto(PUBLIC_GROUP_CHAT_ID, imageUrl, topicOptions);
+    } catch (error) {
+      console.error("Failed to send public settlement image:", error.message);
+
+      if (topicOptions.message_thread_id) {
+        try {
+          lastMessage = await bot.telegram.sendPhoto(PUBLIC_GROUP_CHAT_ID, imageUrl, { disable_web_page_preview: true });
+        } catch (fallbackError) {
+          console.error("Failed to send public settlement image fallback:", fallbackError.message);
+        }
+      }
+    }
+  }
+
   for (const chunk of splitLongMessage(text)) {
     try {
       lastMessage = await bot.telegram.sendMessage(PUBLIC_GROUP_CHAT_ID, chunk, topicOptions);
@@ -2200,9 +2329,10 @@ async function notifySettlementUsers(matchData, orders, settlement) {
     const message = payout
       ? buildWinningUserSettlementMessage(matchData, order, payout)
       : buildLosingUserSettlementMessage(matchData, order, noWinnerMode);
+    const imageUrl = payout ? WINNER_IMAGE_URL : LOSER_IMAGE_URL;
 
     try {
-      await bot.telegram.sendMessage(order.telegram_id, message);
+      await sendOptionalPhoto(order.telegram_id, imageUrl, message);
     } catch (error) {
       console.error(`Failed to notify settlement user ${order.telegram_id}:`, error.message);
     }
@@ -2351,7 +2481,7 @@ async function settleMatch(ctx, text) {
   const adminMessage = buildSettlementCompletedAdminMessage(matchData, settlement);
   const publicMessage = buildSettlementPublicMessage(matchData, settlement);
 
-  const publicNotifyResult = await notifyPublicWorldCupTopicLong(publicMessage);
+  const publicNotifyResult = await notifyPublicWorldCupTopicLong(publicMessage, MATCH_SETTLED_IMAGE_URL);
   const adminFinalMessage = `${adminMessage}
 
 Public Topic Notification: ${publicNotifyResult ? "sent" : "failed or not configured"}`;
@@ -2459,7 +2589,7 @@ async function showMyVote(ctx) {
     .select("*")
     .eq("telegram_id", ctx.from.id)
     .order("created_at", { ascending: false })
-    .limit(20);
+    .limit(100);
 
   if (error) {
     const sent = await ctx.reply(`Failed to load your votes: ${error.message}`, getPrivateMainMenu());
@@ -2467,7 +2597,7 @@ async function showMyVote(ctx) {
   }
 
   if (!orders || orders.length === 0) {
-    const sent = await ctx.reply("You have no World Cup prediction orders yet.", getPrivateMainMenu());
+    const sent = await replyWithOptionalPhoto(ctx, MYVOTE_IMAGE_URL, "You have no World Cup prediction orders yet.", getPrivateMainMenu());
     return rememberPrivateMenuMessage(ctx, sent, "myvote");
   }
 
@@ -2529,18 +2659,24 @@ async function showMyVote(ctx) {
     ? `${totalPnlAmount.gte(0) ? "+" : ""}${formatAmount(totalPnlAmount)} ${currency}`
     : `0 ${currency}`;
 
-  const sent = await replyWithOptionalPhoto(
-    ctx,
-    MYVOTE_IMAGE_URL,
-    `${lines.join("\n\n")}
+  const body = `${lines.join("\n\n")}\n\n💰 Total Vote Amount: ${formatAmount(totalVoteAmount)} ${currency}\n💎 Total PnL: ${totalPnlText}`;
 
-💰 Total Vote Amount: ${formatAmount(totalVoteAmount)} ${currency}
-💎 Total PnL: ${totalPnlText}`,
-    getPrivateMainMenu()
-  );
-  return rememberPrivateMenuMessage(ctx, sent, "myvote");
+  const sentMessages = [];
+
+  if (MYVOTE_IMAGE_URL) {
+    const photo = await ctx.replyWithPhoto(MYVOTE_IMAGE_URL, getPrivateMainMenu());
+    sentMessages.push(photo);
+  }
+
+  const chunks = splitLongMessage(body, 3500);
+  for (let i = 0; i < chunks.length; i += 1) {
+    const options = i === chunks.length - 1 ? getPrivateMainMenu() : undefined;
+    const sent = await ctx.reply(chunks[i], options);
+    sentMessages.push(sent);
+  }
+
+  return rememberPrivateMenuMessages(ctx, sentMessages, "myvote");
 }
-
 
 async function showPendingOrders(ctx, matchCode = null) {
   if (!(await requireAdminControlChat(ctx))) return;
@@ -2604,7 +2740,6 @@ Admin:
 /worldcup_MEX_ZAF_7:7:51_0:0_5:5_Others_2026.06.11_23:00_UTC+4_Group - Create match and post it to World Cup topic
 /confirm_O000123_1150 - Confirm payment
 /mockpay_O000123_1150 - Mock auto payment test
-/void_O000123 - Void order
 /lock_WC0001 - Lock match
 /hide_date_2026.06.19 - Hide all matches on a date
 /show_date_2026.06.19 - Show hidden matches on a date
@@ -2857,7 +2992,7 @@ bot.on("message", async (ctx) => {
 
     if (/^\/void_/i.test(cleaned)) {
       if (!(await requireAdminControlChat(ctx))) return;
-      return voidOrder(ctx, cleaned);
+      return ctx.reply("/void is disabled. Pending unpaid orders are automatically voided after betting time ends.");
     }
 
     if (/^\/lock_/i.test(cleaned)) {
