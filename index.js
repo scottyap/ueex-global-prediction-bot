@@ -596,6 +596,56 @@ async function getAllOpenMatches() {
   return data || [];
 }
 
+function getMatchSortTime(match) {
+  const dateText = String(match.match_date || "9999.12.31").replace(/\./g, "-");
+  const timeText = match.match_time || "23:59";
+  const parsed = new Date(`${dateText}T${timeText}:00Z`).getTime();
+  return Number.isNaN(parsed) ? Number.MAX_SAFE_INTEGER : parsed;
+}
+
+function sortMatchesBySchedule(matches) {
+  return [...(matches || [])].sort((a, b) => {
+    const diff = getMatchSortTime(a) - getMatchSortTime(b);
+    if (diff !== 0) return diff;
+    return String(a.match_code || "").localeCompare(String(b.match_code || ""));
+  });
+}
+
+function getMatchDateKey(match) {
+  return match.match_date || "Unknown Date";
+}
+
+function getMatchDayLabel(dateKey) {
+  if (!dateKey || dateKey === "Unknown Date") return "Unknown Date";
+
+  const parts = String(dateKey).split(".").map((value) => Number(value));
+  if (parts.length !== 3 || parts.some((value) => Number.isNaN(value))) {
+    return String(dateKey);
+  }
+
+  const date = new Date(Date.UTC(parts[0], parts[1] - 1, parts[2]));
+  const formatted = new Intl.DateTimeFormat("en-US", {
+    weekday: "short",
+    month: "short",
+    day: "numeric"
+  }).format(date);
+
+  return `${formatted} (${dateKey})`;
+}
+
+function getMatchListButtonLabel(match) {
+  const timeText = match.match_time || "TBD";
+  return `${formatTeamWithFlag(match.team_a)} vs ${formatTeamWithFlag(match.team_b)} • ${timeText}`;
+}
+
+function encodeDateKey(dateKey) {
+  return String(dateKey || "Unknown Date").replace(/:/g, "-");
+}
+
+function decodeDateKey(dateKey) {
+  return String(dateKey || "Unknown Date").replace(/-/g, ":");
+}
+
 async function getMatchTotals(matchCode, match = null) {
   const matchData = match || (await getMatch(matchCode));
   const options = getSelectionOptions(matchData);
@@ -638,8 +688,15 @@ function getBetNowUrl(matchCode) {
 
 function getPrivateMainMenu() {
   return Markup.keyboard([
-    ["🎮 Game", "📊 My Vote"]
+    ["⚽ Matches", "📊 My Vote"],
+    ["🛟 Support"]
   ]).resize();
+}
+
+function getSupportKeyboard() {
+  return Markup.inlineKeyboard([
+    [Markup.button.url("Contact @UEEx_JJ", "https://t.me/UEEx_JJ")]
+  ]);
 }
 
 function buildGroupMatchKeyboard(match) {
@@ -992,27 +1049,8 @@ async function showWorldCupEntry(ctx) {
 }
 
 async function showOpenMatches(ctx) {
-  const matches = isPrivateChat(ctx) ? await getAllOpenMatches() : await getOpenMatches(ctx.chat.id);
-  const openMatches = matches.filter(isBettingOpen);
-
-  if (!openMatches.length) {
-    return ctx.reply("No open World Cup prediction matches are available now.");
-  }
-
   if (isPrivateChat(ctx)) {
-    const keyboard = openMatches.map((match) => [
-      Markup.button.callback(
-        `${formatTeamWithFlag(match.team_a)} vs ${formatTeamWithFlag(match.team_b)} (${match.match_code})`,
-        `wcmatch:${match.match_code}`
-      )
-    ]);
-
-    return replyWithOptionalPhoto(
-      ctx,
-      WORLDCUP_IMAGE_URL,
-      "Please select a match:",
-      Markup.inlineKeyboard(keyboard)
-    );
+    return showMatchDateSelection(ctx);
   }
 
   const message = "Please use the World Cup topic and tap Vote Now to join the prediction in private chat.";
@@ -1027,6 +1065,74 @@ async function showOpenMatches(ctx) {
   }
 
   return sent;
+}
+
+async function showMatchDateSelection(ctx, edit = false) {
+  const matches = sortMatchesBySchedule((await getAllOpenMatches()).filter(isBettingOpen));
+
+  if (!matches.length) {
+    const message = "No open World Cup prediction matches are available now.";
+    if (edit) return editCallbackMessage(ctx, message, null);
+    return ctx.reply(message, getPrivateMainMenu());
+  }
+
+  const seen = new Set();
+  const rows = [];
+
+  for (const match of matches) {
+    const dateKey = getMatchDateKey(match);
+    if (seen.has(dateKey)) continue;
+    seen.add(dateKey);
+
+    const count = matches.filter((item) => getMatchDateKey(item) === dateKey).length;
+    rows.push([
+      Markup.button.callback(
+        `📅 ${getMatchDayLabel(dateKey)} • ${count} match${count > 1 ? "es" : ""}`,
+        `wcdate:${encodeDateKey(dateKey)}`
+      )
+    ]);
+  }
+
+  const text = "🏆 Upcoming Matches\n\nPlease select a match day:";
+  const keyboard = Markup.inlineKeyboard(rows);
+
+  if (edit) {
+    return editCallbackMessage(ctx, text, keyboard);
+  }
+
+  return replyWithOptionalPhoto(ctx, WORLDCUP_IMAGE_URL, text, keyboard);
+}
+
+async function showMatchesForDate(ctx, dateKey, edit = false) {
+  const matches = sortMatchesBySchedule(
+    (await getAllOpenMatches()).filter((match) => isBettingOpen(match) && getMatchDateKey(match) === dateKey)
+  );
+
+  if (!matches.length) {
+    const message = "No open matches are available for this date.";
+    if (edit) return editCallbackMessage(ctx, message, Markup.inlineKeyboard([[Markup.button.callback("⬅️ Back to dates", "wcdates")]]));
+    return ctx.reply(message, Markup.inlineKeyboard([[Markup.button.callback("⬅️ Back to dates", "wcdates")]]));
+  }
+
+  const lines = matches.map((match) => {
+    const timeText = match.match_timezone ? `${match.match_time || "TBD"} ${match.match_timezone}` : (match.match_time || "TBD");
+    const stageText = match.match_stage ? ` | ${String(match.match_stage).replace(/-/g, " ")}` : "";
+    return `${formatTeamWithFlag(match.team_a)} vs ${formatTeamWithFlag(match.team_b)} • ${timeText}${stageText}`;
+  });
+
+  const rows = matches.map((match) => [
+    Markup.button.callback(getMatchListButtonLabel(match), `wcmatch:${match.match_code}`)
+  ]);
+  rows.push([Markup.button.callback("⬅️ Back to dates", "wcdates")]);
+
+  const text = `📅 ${getMatchDayLabel(dateKey)}\n\n${lines.join("\n")}`;
+  const keyboard = Markup.inlineKeyboard(rows);
+
+  if (edit) {
+    return editCallbackMessage(ctx, text, keyboard);
+  }
+
+  return replyWithOptionalPhoto(ctx, WORLDCUP_IMAGE_URL, text, keyboard);
 }
 
 async function startPrivateBet(ctx, matchCode) {
@@ -2012,7 +2118,7 @@ async function showAdminHelp(ctx) {
   const text = `⚽ UEEx World Cup Bot Commands
 
 User:
-/worldcup - Join prediction
+/worldcup - View matches
 /myvote - View my votes
 
 Admin:
@@ -2046,7 +2152,7 @@ bot.start(async (ctx) => {
   }
 
   if (isPrivateChat(ctx)) {
-    return showOpenMatches(ctx);
+    return showMatchDateSelection(ctx);
   }
 
   return ctx.reply("UEEx World Cup Bot is running. Send /worldcup to view open matches.");
@@ -2110,6 +2216,25 @@ bot.command("myvote", async (ctx) => {
 bot.on("callback_query", async (ctx) => {
   try {
     const data = ctx.callbackQuery?.data || "";
+
+    if (data === "wcdates") {
+      if (!isPrivateChat(ctx)) {
+        return ctx.answerCbQuery("Please use private chat with the bot.", { show_alert: true });
+      }
+
+      await ctx.answerCbQuery();
+      return showMatchDateSelection(ctx, true);
+    }
+
+    if (data.startsWith("wcdate:")) {
+      if (!isPrivateChat(ctx)) {
+        return ctx.answerCbQuery("Please use private chat with the bot.", { show_alert: true });
+      }
+
+      const dateKey = decodeDateKey(data.replace(/^wcdate:/, ""));
+      await ctx.answerCbQuery();
+      return showMatchesForDate(ctx, dateKey, true);
+    }
 
     if (data.startsWith("wcmatch:")) {
       const matchCode = data.split(":")[1];
@@ -2272,9 +2397,14 @@ bot.on("message", async (ctx) => {
       return showPendingOrders(ctx, pendingMatch?.[1] || null);
     }
 
-    if (isPrivateChat(ctx) && ["🎮 Game", "Game", "game"].includes(cleaned)) {
+    if (isPrivateChat(ctx) && ["⚽ Matches", "Matches", "matches", "🎮 Game", "Game", "game"].includes(cleaned)) {
       clearSession(ctx);
-      return showOpenMatches(ctx);
+      return showMatchDateSelection(ctx);
+    }
+
+    if (isPrivateChat(ctx) && ["🛟 Support", "Support", "support"].includes(cleaned)) {
+      clearSession(ctx);
+      return ctx.reply("Need help? Contact UEEx support below.", getSupportKeyboard());
     }
 
     if (isPrivateChat(ctx) && ["📊 My Vote", "My Vote", "my vote", "My Votes", "my votes"].includes(cleaned)) {
@@ -2330,7 +2460,7 @@ bot.on("message", async (ctx) => {
 
       clearSession(ctx);
       await ctx.reply(`✅ UID confirmed: ${uid}`);
-      return showOpenMatches(ctx);
+      return showMatchDateSelection(ctx);
     }
 
     if (session.step === "awaiting_amount") {
