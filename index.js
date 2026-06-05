@@ -31,6 +31,15 @@ const UEEX_SUCCESS_STATUS = process.env.UEEX_SUCCESS_STATUS || "success";
 const WORLDCUP_IMAGE_URL = process.env.WORLDCUP_IMAGE_URL || "";
 const PENDING_ORDER_IMAGE_URL = process.env.PENDING_ORDER_IMAGE_URL || "";
 const ORDER_CONFIRMED_IMAGE_URL = process.env.ORDER_CONFIRMED_IMAGE_URL || "";
+const RULES_IMAGE_URL =
+  process.env.RULES_IMAGE_URL ||
+  "https://i.ibb.co/5xxJWyJS/Chat-GPT-Image-Jun-5-2026-10-48-45-AM-1.png";
+const SUPPORT_IMAGE_URL =
+  process.env.SUPPORT_IMAGE_URL ||
+  "https://i.ibb.co/MxXqypCm/Chat-GPT-Image-Jun-5-2026-10-48-45-AM-2.png";
+const MYVOTE_IMAGE_URL =
+  process.env.MYVOTE_IMAGE_URL ||
+  "https://i.ibb.co/C3MxB9zh/Chat-GPT-Image-Jun-5-2026-10-48-46-AM-3.png";
 const ADMIN_GROUP_CHAT_ID = process.env.ADMIN_GROUP_CHAT_ID || "";
 const PUBLIC_GROUP_CHAT_ID = process.env.PUBLIC_GROUP_CHAT_ID || process.env.PUBLIC_CHAT_ID || "";
 const PUBLIC_WORLD_CUP_TOPIC_ID = process.env.PUBLIC_WORLD_CUP_TOPIC_ID || process.env.WORLD_CUP_TOPIC_ID || "";
@@ -744,7 +753,7 @@ async function showRules(ctx) {
     await deleteLastPrivateMenuMessage(ctx);
   }
 
-  const sent = await ctx.reply(buildRulesMessage(), getPrivateMainMenu());
+  const sent = await replyWithOptionalPhoto(ctx, RULES_IMAGE_URL, buildRulesMessage(), getPrivateMainMenu());
   return rememberPrivateMenuMessage(ctx, sent);
 }
 
@@ -753,7 +762,7 @@ async function showSupport(ctx) {
     await deleteLastPrivateMenuMessage(ctx);
   }
 
-  const sent = await ctx.reply("🛟 Need help? Contact UEEx support below.", getSupportKeyboard());
+  const sent = await replyWithOptionalPhoto(ctx, SUPPORT_IMAGE_URL, "🛟 Need help? Contact UEEx support below.", getSupportKeyboard());
   return rememberPrivateMenuMessage(ctx, sent);
 }
 
@@ -772,10 +781,13 @@ function buildGroupMatchKeyboard(match) {
 }
 
 function buildOutcomeKeyboard(match, totals) {
+  const dateKey = getMatchDateKey(match);
+
   return Markup.inlineKeyboard([
     [Markup.button.callback(getOutcomeCallbackLabel(match, "A", totals), `wcoutcome:${match.match_code}:A`)],
     [Markup.button.callback(getOutcomeCallbackLabel(match, "DRAW", totals), `wcoutcome:${match.match_code}:DRAW`)],
-    [Markup.button.callback(getOutcomeCallbackLabel(match, "B", totals), `wcoutcome:${match.match_code}:B`)]
+    [Markup.button.callback(getOutcomeCallbackLabel(match, "B", totals), `wcoutcome:${match.match_code}:B`)],
+    [Markup.button.callback("⬅️ Back to match list", `wcdate:${encodeDateKey(dateKey)}`)]
   ]);
 }
 
@@ -1576,6 +1588,7 @@ async function confirmOrderByCode(ctx, orderCode, amount, options = {}) {
 ⚽️ ${formatTeamWithFlag(matchData.team_a)} vs ${formatTeamWithFlag(matchData.team_b)}
 🔸 Selection: ${formatSelectionWithFlags(matchData, order.selection)}
 🔸 Amount: ${formatAmount(amount)} ${matchData.currency}
+🔸 User: ${getTelegramUserLabel(order)}
 
 🎉Total Pool: ${formatAmount(getTotalPool(updatedTotals))} ${matchData.currency}`, ORDER_CONFIRMED_IMAGE_URL);
 
@@ -2153,9 +2166,14 @@ async function showMyVote(ctx) {
 🔸 Total PnL: ${pnl}`;
   });
 
-  const sent = await ctx.reply(`📊 My Votes
+  const sent = await replyWithOptionalPhoto(
+    ctx,
+    MYVOTE_IMAGE_URL,
+    `📊 My Votes
 
-${lines.join("\n\n")}`, getPrivateMainMenu());
+${lines.join("\n\n")}`,
+    getPrivateMainMenu()
+  );
   return rememberPrivateMenuMessage(ctx, sent);
 }
 
