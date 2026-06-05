@@ -31,6 +31,9 @@ const UEEX_SUCCESS_STATUS = process.env.UEEX_SUCCESS_STATUS || "success";
 const WORLDCUP_IMAGE_URL = process.env.WORLDCUP_IMAGE_URL || "";
 const PENDING_ORDER_IMAGE_URL = process.env.PENDING_ORDER_IMAGE_URL || "";
 const ORDER_CONFIRMED_IMAGE_URL = process.env.ORDER_CONFIRMED_IMAGE_URL || "";
+const WELCOME_IMAGE_URL =
+  process.env.WELCOME_IMAGE_URL ||
+  "https://i.ibb.co/zhCkDn3V/Chat-GPT-Image-Jun-5-2026-02-45-56-PM.png";
 const RULES_IMAGE_URL =
   process.env.RULES_IMAGE_URL ||
   "https://i.ibb.co/5xxJWyJS/Chat-GPT-Image-Jun-5-2026-10-48-45-AM-1.png";
@@ -319,7 +322,7 @@ function isValidUid(uid) {
 }
 
 function parsePositiveAmount(value) {
-  const raw = String(value || "").trim();
+  const raw = String(value || "").trim().replace(/,/g, "");
 
   if (!/^\d+(\.\d{1,8})?$/.test(raw)) return null;
 
@@ -332,6 +335,12 @@ function parsePositiveAmount(value) {
   }
 }
 
+function addThousands(value) {
+  const [integerPart, decimalPart] = String(value).split(".");
+  const withCommas = integerPart.replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+  return decimalPart ? `${withCommas}.${decimalPart}` : withCommas;
+}
+
 function formatAmount(value, maxDp = 8) {
   const decimal = new Decimal(value || 0);
 
@@ -340,7 +349,21 @@ function formatAmount(value, maxDp = 8) {
   const fixed = decimal.toDecimalPlaces(maxDp, Decimal.ROUND_DOWN).toFixed();
   const cleaned = fixed.replace(/(\.\d*?)0+$/, "$1").replace(/\.$/, "");
 
-  return cleaned || "0";
+  return addThousands(cleaned || "0");
+}
+
+function formatAmountForCommand(value, maxDp = 8) {
+  const decimal = new Decimal(value || 0);
+  const fixed = decimal.toDecimalPlaces(maxDp, Decimal.ROUND_DOWN).toFixed();
+  return fixed.replace(/(\.\d*?)0+$/, "$1").replace(/\.$/, "") || "0";
+}
+
+function escapeHtml(value) {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
 }
 
 function pad2(value) {
@@ -723,10 +746,17 @@ function getBetNowUrl(matchCode) {
 }
 
 function getPrivateMainMenu() {
-  return Markup.keyboard([
-    ["⚽ Matches", "📊 My Vote"],
-    ["📜 Rules", "🛟 Support"]
-  ]).resize();
+  return {
+    reply_markup: {
+      keyboard: [
+        [{ text: "⚽ Matches" }, { text: "📊 My Vote" }],
+        [{ text: "📜 Rules" }, { text: "🛟 Support" }]
+      ],
+      resize_keyboard: true,
+      one_time_keyboard: false,
+      is_persistent: true
+    }
+  };
 }
 
 function getSupportKeyboard() {
@@ -762,7 +792,12 @@ async function showSupport(ctx) {
     await deleteLastPrivateMenuMessage(ctx);
   }
 
-  const sent = await replyWithOptionalPhoto(ctx, SUPPORT_IMAGE_URL, "🛟 Need help? Contact UEEx support below.", getSupportKeyboard());
+  const sent = await replyWithOptionalPhoto(
+    ctx,
+    SUPPORT_IMAGE_URL,
+    "🛟 Need help? Contact @UEEx_JJ for support.",
+    getPrivateMainMenu()
+  );
   return rememberPrivateMenuMessage(ctx, sent);
 }
 
@@ -784,10 +819,10 @@ function buildOutcomeKeyboard(match, totals) {
   const dateKey = getMatchDateKey(match);
 
   return Markup.inlineKeyboard([
-    [Markup.button.callback(getOutcomeCallbackLabel(match, "A", totals), `wcoutcome:${match.match_code}:A`)],
-    [Markup.button.callback(getOutcomeCallbackLabel(match, "DRAW", totals), `wcoutcome:${match.match_code}:DRAW`)],
-    [Markup.button.callback(getOutcomeCallbackLabel(match, "B", totals), `wcoutcome:${match.match_code}:B`)],
-    [Markup.button.callback("⬅️ Back to match list", `wcdate:${encodeDateKey(dateKey)}`)]
+    [Markup.button.callback(getOutcomeCallbackLabel(match, "A"), `wcoutcome:${match.match_code}:A`)],
+    [Markup.button.callback(getOutcomeCallbackLabel(match, "DRAW"), `wcoutcome:${match.match_code}:DRAW`)],
+    [Markup.button.callback(getOutcomeCallbackLabel(match, "B"), `wcoutcome:${match.match_code}:B`)],
+    [Markup.button.callback("Back", `wcdate:${encodeDateKey(dateKey)}`)]
   ]);
 }
 
@@ -805,7 +840,7 @@ function buildScoreKeyboard(match, outcome) {
     rows.push(buttons.slice(i, i + 2));
   }
 
-  rows.push([Markup.button.callback("⬅️ Back", `wcmatch:${match.match_code}`)]);
+  rows.push([Markup.button.callback("Back", `wcmatch:${match.match_code}`)]);
 
   return Markup.inlineKeyboard(rows);
 }
@@ -880,16 +915,17 @@ function buildPhotoExtra(caption, keyboard = null, extraOptions = {}) {
   return extra;
 }
 
-async function replyWithOptionalPhoto(ctx, imageUrl, text, keyboard = null) {
+async function replyWithOptionalPhoto(ctx, imageUrl, text, keyboard = null, extraOptions = {}) {
   if (imageUrl) {
-    return ctx.replyWithPhoto(imageUrl, buildPhotoExtra(text, keyboard));
+    return ctx.replyWithPhoto(imageUrl, buildPhotoExtra(text, keyboard, extraOptions));
   }
 
-  if (keyboard) {
-    return ctx.reply(text, keyboard);
+  const options = { ...extraOptions };
+  if (keyboard?.reply_markup) {
+    options.reply_markup = keyboard.reply_markup;
   }
 
-  return ctx.reply(text);
+  return ctx.reply(text, options);
 }
 
 async function sendOptionalPhoto(chatId, imageUrl, text, keyboard = null, extraOptions = {}) {
@@ -1201,22 +1237,16 @@ async function showMatchesForDate(ctx, dateKey, edit = false) {
 
   if (!matches.length) {
     const message = "No open matches are available for this date.";
-    if (edit) return editCallbackMessage(ctx, message, Markup.inlineKeyboard([[Markup.button.callback("⬅️ Back to dates", "wcdates")]]));
-    return ctx.reply(message, Markup.inlineKeyboard([[Markup.button.callback("⬅️ Back to dates", "wcdates")]]));
+    if (edit) return editCallbackMessage(ctx, message, Markup.inlineKeyboard([[Markup.button.callback("Back", "wcdates")]]));
+    return ctx.reply(message, Markup.inlineKeyboard([[Markup.button.callback("Back", "wcdates")]]));
   }
-
-  const lines = matches.map((match) => {
-    const timeText = match.match_timezone ? `${match.match_time || "TBD"} ${match.match_timezone}` : (match.match_time || "TBD");
-    const stageText = match.match_stage ? ` | ${String(match.match_stage).replace(/-/g, " ")}` : "";
-    return `${formatTeamWithFlag(match.team_a)} vs ${formatTeamWithFlag(match.team_b)} • ${timeText}${stageText}`;
-  });
 
   const rows = matches.map((match) => [
     Markup.button.callback(getMatchListButtonLabel(match), `wcmatch:${match.match_code}`)
   ]);
-  rows.push([Markup.button.callback("⬅️ Back to dates", "wcdates")]);
+  rows.push([Markup.button.callback("Back", "wcdates")]);
 
-  const text = `📅 ${getMatchDayLabel(dateKey)}\n\n${lines.join("\n")}`;
+  const text = `${getMatchDayLabel(dateKey)}`;
   const keyboard = Markup.inlineKeyboard(rows);
 
   if (edit) {
@@ -1323,16 +1353,16 @@ function buildAmountPrompt(match, selection, pool, prefix = "") {
 
 ` : "";
 
-  return `${intro}Selection: ${formatSelectionWithFlags(match, selection)}
-Pool: ${formatAmount(pool)} ${match.currency}
+  return `${intro}🔸 Selection: ${formatSelectionWithFlags(match, selection)}
+🔸 Pool: ${formatAmount(pool)} ${match.currency}
 
-Please enter your UE voting amount. Minimum: ${formatAmount(MIN_BET_AMOUNT)} ${match.currency}.`;
+Please enter your UE voting amount. Minimum: ${formatAmount(MIN_BET_AMOUNT)} ${match.currency}`;
 }
 async function handleAmountInput(ctx, text, session) {
   const amount = parsePositiveAmount(text);
 
   if (!amount) {
-    return ctx.reply("Invalid amount. Please enter a positive UE amount, for example: 1000 or 1150.5");
+    return ctx.reply("Invalid amount. Please enter a positive UE amount, for example: 1,000 or 1,150.5");
   }
 
   if (amount.lt(MIN_BET_AMOUNT)) {
@@ -1393,14 +1423,14 @@ async function handleAmountInput(ctx, text, session) {
 
   const pendingMessageText = `⚽️ Match: ${formatTeamWithFlag(match.team_a)} vs ${formatTeamWithFlag(match.team_b)}
 
-🔸 Order ID: ${data.order_code}
-🔸 UID: ${data.ueex_uid}
-🔸 TG: ${getTelegramUserLabel(data)}
-🔸 Selection: ${formatSelectionWithFlags(match, data.selection)}
+🔸 Order ID: <code>${escapeHtml(data.order_code)}</code>
+🔸 UID: <code>${escapeHtml(data.ueex_uid)}</code>
+🔸 TG: ${escapeHtml(getTelegramUserLabel(data))}
+🔸 Selection: ${escapeHtml(formatSelectionWithFlags(match, data.selection))}
 🔸 Amount: ${formatAmount(amount)} ${match.currency}
 
-❗️Please transfer ${formatAmount(amount)} ${match.currency} via UEEx internal transfer to UID ${match.receiver_uid}.
-❗️Transfer Remark: ${data.order_code}
+❗️Please transfer ${formatAmount(amount)} ${match.currency} via UEEx internal transfer to UID ${escapeHtml(match.receiver_uid)}.
+❗️Transfer Remark: <code>${escapeHtml(data.order_code)}</code>
 ❗️Your vote will be counted after payment confirmation.`;
 
   const pendingMessage = await replyWithOptionalPhoto(
@@ -1409,7 +1439,8 @@ async function handleAmountInput(ctx, text, session) {
     pendingMessageText,
     Markup.inlineKeyboard([
       [Markup.button.callback("❌ Cancel", `wccancel:${data.order_code}`)]
-    ])
+    ]),
+    { parse_mode: "HTML" }
   );
 
   await supabase
@@ -1433,7 +1464,7 @@ async function handleAmountInput(ctx, text, session) {
 🔸 Remark: ${data.order_code}
 
 Confirm:
-/confirm_${data.order_code}_${formatAmount(amount)}
+/confirm_${data.order_code}_${formatAmountForCommand(amount)}
 
 Void:
 /void_${data.order_code}`);
@@ -2220,7 +2251,7 @@ UID: ${order.ueex_uid}
 TG: ${getTelegramUserLabel(order)}
 Selection: ${selection}
 Amount: ${formatAmount(order.expected_amount)} ${order.currency}
-Confirm: /confirm_${order.order_code}_${formatAmount(order.expected_amount)}`;
+Confirm: /confirm_${order.order_code}_${formatAmountForCommand(order.expected_amount)}`;
   });
 
   return ctx.reply(`🧾 Pending Orders${matchCode ? ` | ${String(matchCode).toUpperCase()}` : ""}
@@ -2252,13 +2283,17 @@ Admin:
   return ctx.reply(text);
 }
 
+function buildWelcomeMessage() {
+  return `🏆 Welcome to UEEx World Cup Prediction
+
+Predict match scores, vote with UE, and track your orders directly in this bot.
+
+Use the menu below to continue.`;
+}
+
 bot.start(async (ctx) => {
   const text = getMessageText(ctx);
   const payload = text.split(/\s+/)[1] || "";
-
-  if (isPrivateChat(ctx)) {
-    await ctx.reply("UEEx World Cup Bot is running. Use the buttons below anytime.", getPrivateMainMenu());
-  }
 
   if (payload.startsWith("bet_")) {
     const matchCode = payload.replace(/^bet_/i, "").toUpperCase();
@@ -2266,10 +2301,13 @@ bot.start(async (ctx) => {
   }
 
   if (isPrivateChat(ctx)) {
-    return showMatchDateSelection(ctx);
+    clearSession(ctx);
+    await deleteLastPrivateMenuMessage(ctx);
+    const sent = await replyWithOptionalPhoto(ctx, WELCOME_IMAGE_URL, buildWelcomeMessage(), getPrivateMainMenu());
+    return rememberPrivateMenuMessage(ctx, sent);
   }
 
-  return ctx.reply("UEEx World Cup Bot is running. Send /worldcup to view open matches.");
+  return ctx.reply("Please open private chat with the bot to join World Cup Prediction.");
 });
 
 bot.command("ping", async (ctx) => {
