@@ -532,6 +532,14 @@ function resultInputToSelection(match, input) {
     return option || normalized;
   }
 
+  const score = parseScoreValue(raw);
+  if (score) {
+    const outcome = score.home > score.away ? "A" : score.home < score.away ? "B" : "DRAW";
+    const otherOption = outcome === "A" ? "A_OTHER" : outcome === "B" ? "B_OTHER" : "DRAW_OTHER";
+    const foundOther = options.find((item) => item.toUpperCase() === otherOption);
+    return foundOther || raw;
+  }
+
   const legacyValue = normalizeTeam(raw);
   if (legacyValue === "DRAW" || legacyValue === "TIE") return "DRAW";
   if (legacyValue === normalizeTeam(match.team_a)) return "A";
@@ -819,9 +827,11 @@ function buildOutcomeKeyboard(match, totals) {
   const dateKey = getMatchDateKey(match);
 
   return Markup.inlineKeyboard([
-    [Markup.button.callback(getOutcomeCallbackLabel(match, "A"), `wcoutcome:${match.match_code}:A`)],
-    [Markup.button.callback(getOutcomeCallbackLabel(match, "DRAW"), `wcoutcome:${match.match_code}:DRAW`)],
-    [Markup.button.callback(getOutcomeCallbackLabel(match, "B"), `wcoutcome:${match.match_code}:B`)],
+    [
+      Markup.button.callback(getOutcomeCallbackLabel(match, "A"), `wcoutcome:${match.match_code}:A`),
+      Markup.button.callback("Draw", `wcoutcome:${match.match_code}:DRAW`),
+      Markup.button.callback(getOutcomeCallbackLabel(match, "B"), `wcoutcome:${match.match_code}:B`)
+    ],
     [Markup.button.callback("Back", `wcdate:${encodeDateKey(dateKey)}`)]
   ]);
 }
@@ -1756,6 +1766,124 @@ async function lockMatch(ctx, text) {
   return ctx.reply(`🔒 Match locked: ${matchCode}`);
 }
 
+async function hideDateMatches(ctx, text) {
+  if (!(await requireAdmin(ctx))) return;
+
+  const cleaned = cleanCommandText(text);
+  const match = cleaned.match(/^\/hide_date_(\d{4}\.\d{2}\.\d{2})$/i);
+
+  if (!match) {
+    return ctx.reply("Invalid format.\nExample: /hide_date_2026.06.19");
+  }
+
+  const date = match[1];
+  const { data, error } = await supabase
+    .from("wc_matches")
+    .update({ status: "hidden", updated_at: new Date().toISOString() })
+    .eq("match_date", date)
+    .in("status", ["open", "locked"])
+    .select("match_code");
+
+  if (error) {
+    return ctx.reply(`Failed to hide matches: ${error.message}`);
+  }
+
+  return ctx.reply(`✅ Hidden ${(data || []).length} match(es) on ${date}.`);
+}
+
+async function showDateMatches(ctx, text) {
+  if (!(await requireAdmin(ctx))) return;
+
+  const cleaned = cleanCommandText(text);
+  const match = cleaned.match(/^\/show_date_(\d{4}\.\d{2}\.\d{2})$/i);
+
+  if (!match) {
+    return ctx.reply("Invalid format.\nExample: /show_date_2026.06.19");
+  }
+
+  const date = match[1];
+  const { data, error } = await supabase
+    .from("wc_matches")
+    .update({ status: "open", updated_at: new Date().toISOString() })
+    .eq("match_date", date)
+    .eq("status", "hidden")
+    .select("match_code");
+
+  if (error) {
+    return ctx.reply(`Failed to show matches: ${error.message}`);
+  }
+
+  return ctx.reply(`✅ Shown ${(data || []).length} match(es) on ${date}.`);
+}
+
+async function hideSingleMatch(ctx, text) {
+  if (!(await requireAdmin(ctx))) return;
+
+  const cleaned = cleanCommandText(text);
+  const match = cleaned.match(/^\/hide_(WC[A-Z0-9]+)$/i);
+
+  if (!match) {
+    return ctx.reply("Invalid format.\nExample: /hide_WC0001");
+  }
+
+  const matchCode = match[1].toUpperCase();
+  const matchData = await getMatch(matchCode);
+
+  if (!matchData) {
+    return ctx.reply("Match not found.");
+  }
+
+  if (matchData.status === "settled") {
+    return ctx.reply("Settled matches cannot be hidden.");
+  }
+
+  const { error } = await supabase
+    .from("wc_matches")
+    .update({ status: "hidden", updated_at: new Date().toISOString() })
+    .eq("match_code", matchCode);
+
+  if (error) {
+    return ctx.reply(`Failed to hide match: ${error.message}`);
+  }
+
+  await updateLiveMatchMessage(matchCode);
+  return ctx.reply(`✅ Match hidden: ${matchCode}`);
+}
+
+async function showSingleMatch(ctx, text) {
+  if (!(await requireAdmin(ctx))) return;
+
+  const cleaned = cleanCommandText(text);
+  const match = cleaned.match(/^\/show_(WC[A-Z0-9]+)$/i);
+
+  if (!match) {
+    return ctx.reply("Invalid format.\nExample: /show_WC0001");
+  }
+
+  const matchCode = match[1].toUpperCase();
+  const matchData = await getMatch(matchCode);
+
+  if (!matchData) {
+    return ctx.reply("Match not found.");
+  }
+
+  if (matchData.status !== "hidden") {
+    return ctx.reply(`Match is not hidden. Current status: ${matchData.status}`);
+  }
+
+  const { error } = await supabase
+    .from("wc_matches")
+    .update({ status: "open", updated_at: new Date().toISOString() })
+    .eq("match_code", matchCode);
+
+  if (error) {
+    return ctx.reply(`Failed to show match: ${error.message}`);
+  }
+
+  await updateLiveMatchMessage(matchCode);
+  return ctx.reply(`✅ Match shown: ${matchCode}`);
+}
+
 async function setMatchResult(ctx, text) {
   if (!(await requireAdmin(ctx))) return;
 
@@ -1882,17 +2010,187 @@ function buildSettlementPreviewMessage(matchData, settlement) {
 
 Match ID: ${matchData.match_code}
 Match: ${formatTeamWithFlag(matchData.team_a)} vs ${formatTeamWithFlag(matchData.team_b)}
-Result: ${labelForSelection(matchData, settlement.result)}
+Result: ${formatSelectionWithFlags(matchData, settlement.result)}
 
-Total Pool: ${formatAmount(settlement.totalPool)} ${matchData.currency}
-Platform Fee ${feePercent}%: ${formatAmount(settlement.feeAmount)} ${matchData.currency}
-Net Pool: ${formatAmount(settlement.netPool)} ${matchData.currency}
-Winning Pool: ${formatAmount(settlement.winningPool)} ${matchData.currency}
+💰 Total Pool: ${formatAmount(settlement.totalPool)} ${matchData.currency}
+🏦 Platform Fee ${feePercent}%: ${formatAmount(settlement.feeAmount)} ${matchData.currency}
+🎁 Net Pool: ${formatAmount(settlement.netPool)} ${matchData.currency}
+🎯 Winning Pool: ${formatAmount(settlement.winningPool)} ${matchData.currency}
 
 Winners:
 ${lines.length ? lines.join("\n") : "No winners."}
 
-Use /settle_${matchData.match_code} to publish final result.`;
+Use /settle_${matchData.match_code} to publish and notify users.`;
+}
+
+function getPublicUserLabel(order, index) {
+  if (order.username) return `@${order.username}`;
+  return `Anonymous Winner #${index + 1}`;
+}
+
+function buildSettlementCompletedAdminMessage(matchData, settlement) {
+  const feePercent = new Decimal(settlement.feeBps).div(100).toFixed();
+  const winnerLines = settlement.payouts.map((payout, index) => {
+    const order = payout.order;
+    return `${index + 1}. ${getTelegramUserLabel(order)} / UID ${order.ueex_uid}
+   Vote: ${formatAmount(payout.winningAmount)} ${matchData.currency}
+   Payout: ${formatAmount(payout.payoutAmount)} ${matchData.currency}`;
+  });
+
+  return `✅ Settlement Completed
+
+⚽️ ${formatTeamWithFlag(matchData.team_a)} vs ${formatTeamWithFlag(matchData.team_b)}
+🔸 Match ID: ${matchData.match_code}
+🔸 Result: ${formatSelectionWithFlags(matchData, settlement.result)}
+
+💰 Total Pool: ${formatAmount(settlement.totalPool)} ${matchData.currency}
+🏦 Platform Fee ${feePercent}%: ${formatAmount(settlement.feeAmount)} ${matchData.currency}
+🎁 Net Pool: ${formatAmount(settlement.netPool)} ${matchData.currency}
+🎯 Winning Pool: ${formatAmount(settlement.winningPool)} ${matchData.currency}
+
+Winners:
+${winnerLines.length ? winnerLines.join("\n\n") : "No winners."}`;
+}
+
+function buildSettlementPublicMessage(matchData, settlement) {
+  const feePercent = new Decimal(settlement.feeBps).div(100).toFixed();
+  const winnerLines = settlement.payouts.map((payout, index) => {
+    const order = payout.order;
+    return `${index + 1}. ${getPublicUserLabel(order, index)}
+   Vote: ${formatAmount(payout.winningAmount)} ${matchData.currency}
+   Payout: ${formatAmount(payout.payoutAmount)} ${matchData.currency}`;
+  });
+
+  return `🏆 Match Settled
+
+⚽️ ${formatTeamWithFlag(matchData.team_a)} vs ${formatTeamWithFlag(matchData.team_b)}
+🔸 Result: ${formatSelectionWithFlags(matchData, settlement.result)}
+
+💰 Total Pool: ${formatAmount(settlement.totalPool)} ${matchData.currency}
+🏦 Platform Fee ${feePercent}%: ${formatAmount(settlement.feeAmount)} ${matchData.currency}
+🎁 Net Pool: ${formatAmount(settlement.netPool)} ${matchData.currency}
+🎯 Winning Pool: ${formatAmount(settlement.winningPool)} ${matchData.currency}
+
+Winners:
+${winnerLines.length ? winnerLines.join("\n\n") : "No winners. UEEx will review this match manually."}
+
+Congratulations to all winners! 🎉`;
+}
+
+function buildWinningUserSettlementMessage(matchData, order, payout) {
+  const voteAmount = new Decimal(order.confirmed_amount || 0);
+  const pnl = payout.payoutAmount.minus(voteAmount);
+  const pnlSign = pnl.gte(0) ? "+" : "";
+
+  return `🎉 Congratulations! You won.
+
+⚽️ Match: ${formatTeamWithFlag(matchData.team_a)} vs ${formatTeamWithFlag(matchData.team_b)}
+🔸 Result: ${formatSelectionWithFlags(matchData, matchData.result)}
+🔸 Your Selection: ${formatSelectionWithFlags(matchData, order.selection)}
+🔸 Your Vote: ${formatAmount(voteAmount)} ${matchData.currency}
+🔸 Estimated Payout: ${formatAmount(payout.payoutAmount)} ${matchData.currency}
+🔸 Total PnL: ${pnlSign}${formatAmount(pnl)} ${matchData.currency}
+
+Rewards will be arranged after final review.`;
+}
+
+function buildLosingUserSettlementMessage(matchData, order, noWinnerMode = false) {
+  const voteAmount = new Decimal(order.confirmed_amount || 0);
+
+  if (noWinnerMode) {
+    return `Match Settled
+
+⚽️ Match: ${formatTeamWithFlag(matchData.team_a)} vs ${formatTeamWithFlag(matchData.team_b)}
+🔸 Result: ${formatSelectionWithFlags(matchData, matchData.result)}
+🔸 Your Selection: ${formatSelectionWithFlags(matchData, order.selection)}
+🔸 Your Vote: ${formatAmount(voteAmount)} ${matchData.currency}
+
+No exact-score winners were found. UEEx will review this match manually.`;
+  }
+
+  return `Match Settled
+
+⚽️ Match: ${formatTeamWithFlag(matchData.team_a)} vs ${formatTeamWithFlag(matchData.team_b)}
+🔸 Result: ${formatSelectionWithFlags(matchData, matchData.result)}
+🔸 Your Selection: ${formatSelectionWithFlags(matchData, order.selection)}
+🔸 Your Vote: ${formatAmount(voteAmount)} ${matchData.currency}
+🔸 Total PnL: -${formatAmount(voteAmount)} ${matchData.currency}
+
+Thank you for participating.`;
+}
+
+function splitLongMessage(text, maxLength = 3800) {
+  const lines = String(text || "").split("\n");
+  const chunks = [];
+  let current = "";
+
+  for (const line of lines) {
+    const next = current ? `${current}\n${line}` : line;
+    if (next.length > maxLength && current) {
+      chunks.push(current);
+      current = line;
+    } else {
+      current = next;
+    }
+  }
+
+  if (current) chunks.push(current);
+  return chunks;
+}
+
+async function replyLongMessage(ctx, text) {
+  const chunks = splitLongMessage(text);
+  let lastMessage = null;
+
+  for (const chunk of chunks) {
+    lastMessage = await ctx.reply(chunk);
+  }
+
+  return lastMessage;
+}
+
+async function notifyPublicWorldCupTopicLong(text) {
+  if (!PUBLIC_GROUP_CHAT_ID) return null;
+
+  const topicOptions = PUBLIC_WORLD_CUP_TOPIC_ID
+    ? { message_thread_id: Number(PUBLIC_WORLD_CUP_TOPIC_ID) }
+    : {};
+
+  let lastMessage = null;
+  for (const chunk of splitLongMessage(text)) {
+    try {
+      lastMessage = await bot.telegram.sendMessage(PUBLIC_GROUP_CHAT_ID, chunk, topicOptions);
+    } catch (error) {
+      console.error("Failed to send public settlement chunk:", error.message);
+    }
+  }
+
+  return lastMessage;
+}
+
+async function notifySettlementUsers(matchData, orders, settlement) {
+  const payoutByOrderKey = new Map();
+
+  for (const payout of settlement.payouts) {
+    const key = `${payout.order.telegram_id}:${payout.order.selection}:${payout.order.confirmed_amount}:${payout.order.created_at}`;
+    payoutByOrderKey.set(key, payout);
+  }
+
+  const noWinnerMode = settlement.payouts.length === 0;
+
+  for (const order of orders) {
+    const key = `${order.telegram_id}:${order.selection}:${order.confirmed_amount}:${order.created_at}`;
+    const payout = payoutByOrderKey.get(key);
+    const message = payout
+      ? buildWinningUserSettlementMessage(matchData, order, payout)
+      : buildLosingUserSettlementMessage(matchData, order, noWinnerMode);
+
+    try {
+      await bot.telegram.sendMessage(order.telegram_id, message);
+    } catch (error) {
+      console.error(`Failed to notify settlement user ${order.telegram_id}:`, error.message);
+    }
+  }
 }
 
 async function previewSettlement(ctx, text) {
@@ -1970,7 +2268,7 @@ async function previewSettlement(ctx, text) {
     }
   }
 
-  return ctx.reply(buildSettlementPreviewMessage(matchData, settlement));
+  return replyLongMessage(ctx, buildSettlementPreviewMessage(matchData, settlement));
 }
 
 async function settleMatch(ctx, text) {
@@ -1990,33 +2288,32 @@ async function settleMatch(ctx, text) {
     return ctx.reply("Match not found.");
   }
 
-  const { data: settlement, error: settlementError } = await supabase
+  const { data: savedSettlement, error: settlementError } = await supabase
     .from("wc_settlements")
     .select("*")
     .eq("match_code", matchCode)
     .maybeSingle();
 
-  if (settlementError || !settlement) {
+  if (settlementError || !savedSettlement) {
     return ctx.reply(`No settlement preview found. Please run /preview_${matchCode} first.`);
   }
 
-  if (settlement.status === "settled") {
+  if (savedSettlement.status === "settled") {
     return ctx.reply("This match has already been settled.");
   }
 
-  const { data: payouts, error: payoutsError } = await supabase
-    .from("wc_payouts")
-    .select("*")
-    .eq("match_code", matchCode)
-    .order("payout_amount", { ascending: false });
-
-  if (payoutsError) {
-    return ctx.reply(`Failed to load payouts: ${payoutsError.message}`);
-  }
+  const orders = await loadConfirmedOrders(matchCode);
+  const settlement = calculateSettlement(matchData, orders);
 
   await supabase
     .from("wc_settlements")
     .update({
+      result: settlement.result,
+      total_pool: settlement.totalPool.toFixed(),
+      fee_amount: settlement.feeAmount.toFixed(),
+      net_pool: settlement.netPool.toFixed(),
+      winning_pool: settlement.winningPool.toFixed(),
+      fee_bps: settlement.feeBps,
       status: "settled",
       settled_by: ctx.from.id,
       settled_at: new Date().toISOString()
@@ -2033,25 +2330,14 @@ async function settleMatch(ctx, text) {
 
   await updateLiveMatchMessage(matchCode);
 
-  const lines = (payouts || []).map((payout, index) => {
-    const user = payout.username ? `@${payout.username}` : `UID ${payout.ueex_uid}`;
-    return `${index + 1}. ${user} / UID ${payout.ueex_uid} - ${formatAmount(payout.payout_amount)} ${payout.currency}`;
-  });
+  await notifySettlementUsers(matchData, orders, settlement);
 
-  return ctx.reply(`🎉 World Cup Prediction Settled
+  const adminMessage = buildSettlementCompletedAdminMessage(matchData, settlement);
+  const publicMessage = buildSettlementPublicMessage(matchData, settlement);
 
-Match ID: ${matchCode}
-Match: ${formatTeamWithFlag(matchData.team_a)} vs ${formatTeamWithFlag(matchData.team_b)}
-Result: ${labelForSelection(matchData, settlement.result)}
+  await notifyPublicWorldCupTopicLong(publicMessage);
 
-Total Pool: ${formatAmount(settlement.total_pool)} ${matchData.currency}
-Platform Fee: ${formatAmount(settlement.fee_amount)} ${matchData.currency}
-Net Pool: ${formatAmount(settlement.net_pool)} ${matchData.currency}
-
-Payouts:
-${lines.length ? lines.join("\n") : "No winners."}
-
-Admins will arrange reward distribution manually.`);
+  return replyLongMessage(ctx, adminMessage);
 }
 
 function getMatchResultDisplay(match) {
@@ -2272,6 +2558,10 @@ Admin:
 /mockpay_O000123_1150 - Mock auto payment test
 /void_O000123 - Void order
 /lock_WC0001 - Lock match
+/hide_date_2026.06.19 - Hide all matches on a date
+/show_date_2026.06.19 - Show hidden matches on a date
+/hide_WC0001 - Hide a match
+/show_WC0001 - Show a hidden match
 /result_WC0001_0:0 - Record result
 /preview_WC0001 - Generate settlement preview
 /settle_WC0001 - Publish settlement
@@ -2527,6 +2817,26 @@ bot.on("message", async (ctx) => {
     if (/^\/lock_/i.test(cleaned)) {
       if (!(await requireAdminControlChat(ctx))) return;
       return lockMatch(ctx, cleaned);
+    }
+
+    if (/^\/hide_date_/i.test(cleaned)) {
+      if (!(await requireAdminControlChat(ctx))) return;
+      return hideDateMatches(ctx, cleaned);
+    }
+
+    if (/^\/show_date_/i.test(cleaned)) {
+      if (!(await requireAdminControlChat(ctx))) return;
+      return showDateMatches(ctx, cleaned);
+    }
+
+    if (/^\/hide_WC/i.test(cleaned)) {
+      if (!(await requireAdminControlChat(ctx))) return;
+      return hideSingleMatch(ctx, cleaned);
+    }
+
+    if (/^\/show_WC/i.test(cleaned)) {
+      if (!(await requireAdminControlChat(ctx))) return;
+      return showSingleMatch(ctx, cleaned);
     }
 
     if (/^\/result_/i.test(cleaned)) {
