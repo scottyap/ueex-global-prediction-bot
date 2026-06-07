@@ -1132,6 +1132,56 @@ function createUeexSign(params) {
   return md5Upper(raw);
 }
 
+
+function maskSensitiveValue(value, visibleStart = 4, visibleEnd = 4) {
+  const text = String(value || "");
+  if (!text) return "";
+  if (text.length <= visibleStart + visibleEnd) return "***";
+  return `${text.slice(0, visibleStart)}***${text.slice(-visibleEnd)}`;
+}
+
+function buildSignRawFromEntries(entries, secretValue, maskSensitive = false) {
+  const secret = maskSensitive ? "<SECRET>" : secretValue;
+  const formatValue = (key, value) => {
+    if (!maskSensitive) return String(value);
+    if (["api_key", "token", "api_token", "access_token"].includes(String(key).toLowerCase())) {
+      return maskSensitiveValue(value);
+    }
+    return String(value);
+  };
+
+  if (UEEX_SIGN_MODE === "concat_secret_suffix") {
+    return `${entries.map(([key, value]) => `${key}${formatValue(key, value)}`).join("")}${secret}`;
+  }
+
+  if (UEEX_SIGN_MODE === "concat_secret_prefix") {
+    return `${secret}${entries.map(([key, value]) => `${key}${formatValue(key, value)}`).join("")}`;
+  }
+
+  if (UEEX_SIGN_MODE === "query_secret_prefix") {
+    return `${UEEX_SIGN_SECRET_PARAM}=${secret}&${entries.map(([key, value]) => `${key}=${formatValue(key, value)}`).join("&")}`;
+  }
+
+  return `${entries.map(([key, value]) => `${key}=${formatValue(key, value)}`).join("&")}&${UEEX_SIGN_SECRET_PARAM}=${secret}`;
+}
+
+function createUeexSignDebug(params) {
+  const cleanParams = getNonEmptyParams(params);
+  const entries = Object.entries(cleanParams)
+    .filter(([key]) => key !== "sign")
+    .sort(([a], [b]) => a.localeCompare(b));
+
+  const raw = buildSignRawFromEntries(entries, UEEX_API_SECRET, false);
+  const rawMasked = buildSignRawFromEntries(entries, UEEX_API_SECRET, true);
+  const sign = md5Upper(raw);
+
+  return {
+    entries,
+    rawMasked,
+    sign
+  };
+}
+
 function buildUeexApiParams(extraParams = {}) {
   const nonce = crypto.randomBytes(8).toString("hex");
   const timestamp = String(Date.now());
@@ -1574,6 +1624,126 @@ async function fetchUeexPaymentRawRecords({ startAt, endAt, paymentType, include
       end_time: extraParams.end_time
     }
   };
+}
+
+
+async function payCheckSignDebugCommand(ctx) {
+  if (!(await requireAdminControlChat(ctx))) return;
+
+  try {
+    if (!UEEX_API_BASE_URL || !UEEX_API_KEY || !UEEX_API_SECRET) {
+      return ctx.reply("UEEx API is not configured. Please set UEEX_API_BASE_URL, UEEX_API_KEY, and UEEX_API_SECRET.");
+    }
+
+    const pendingOrders = await loadPendingOrdersForAutoConfirm();
+    const { startAt, endAt, mode } = buildRawDebugTimeRange(pendingOrders);
+
+    const extraParams = {
+      item_id: UEEX_PAYMENT_ITEM_ID,
+      type: UEEX_PAYMENT_TYPE,
+      page: 1,
+      limit: 5,
+      start_time: apiTimeSeconds(startAt),
+      end_time: apiTimeSeconds(endAt)
+    };
+
+    const nonce = crypto.randomBytes(8).toString("hex");
+    const timestamp = String(Date.now());
+    const baseParams = getNonEmptyParams({
+      api_key: UEEX_API_KEY,
+      nonce,
+      timestamp,
+      token: UEEX_API_TOKEN,
+      ...extraParams
+    });
+
+    const signDebug = createUeexSignDebug(baseParams);
+    const signedParams = {
+      ...baseParams,
+      sign: signDebug.sign
+    };
+
+    const formData = new FormData();
+    for (const [key, value] of Object.entries(signedParams)) {
+      formData.append(key, String(value));
+    }
+
+    const url = buildUeexUrl(UEEX_API_DEPOSIT_LIST_PATH);
+    const response = await fetch(url, {
+      method: "POST",
+      body: formData
+    });
+
+    const responseText = await response.text();
+    let json = null;
+
+    try {
+      json = JSON.parse(responseText);
+    } catch (error) {
+      json = null;
+    }
+
+    const records = json ? getNestedArray(json) || [] : [];
+    const apiStatus = json ? json.status ?? json.code ?? json.status_code ?? json.statusCode ?? "n/a" : "non-json";
+    const apiMessage = json ? json.msg || json.message || json.error || "empty" : truncateForTelegram(responseText, 120);
+
+    const safeParams = Object.fromEntries(
+      Object.entries(signedParams).map(([key, value]) => {
+        const lower = key.toLowerCase();
+        if (["api_key", "token", "api_token", "access_token"].includes(lower)) {
+          return [key, maskSensitiveValue(value)];
+        }
+        if (lower === "sign") {
+          const signText = String(value || "");
+          return [key, `${signText.slice(0, 8)}***${signText.slice(-6)}`];
+        }
+        return [key, String(value)];
+      })
+    );
+
+    const lines = [
+      "🧪 Payment Sign Debug",
+      "",
+      `API URL: ${url}`,
+      `API path: ${UEEX_API_DEPOSIT_LIST_PATH}`,
+      `HTTP: ${response.status}`,
+      `API status/code: ${apiStatus}`,
+      `API message: ${apiMessage}`,
+      `Records: ${records.length}`,
+      "",
+      `Range mode: ${mode}`,
+      `Start: ${startAt.toISOString()}`,
+      `End: ${endAt.toISOString()}`,
+      `Payment type: ${UEEX_PAYMENT_TYPE}`,
+      `Item ID: ${UEEX_PAYMENT_ITEM_ID}`,
+      `Receiver UID: ${UEEX_RECEIVER_UID}`,
+      "",
+      `Sign mode: ${UEEX_SIGN_MODE}`,
+      `Secret param: ${UEEX_SIGN_SECRET_PARAM}`,
+      `Timestamp: ${timestamp}`,
+      `Timestamp length: ${timestamp.length}`,
+      `Nonce: ${nonce}`,
+      `API key: ${maskSensitiveValue(UEEX_API_KEY)}`,
+      `Token configured: ${UEEX_API_TOKEN ? "yes" : "no"}`,
+      `Secret configured: ${UEEX_API_SECRET ? "yes" : "no"}`,
+      "",
+      `Sorted sign keys: ${signDebug.entries.map(([key]) => key).join(", ")}`,
+      `Request params: ${truncateForTelegram(safeParams, 900)}`,
+      `String to sign (masked): ${truncateForTelegram(signDebug.rawMasked, 1200)}`,
+      `Generated sign: ${signDebug.sign.slice(0, 8)}***${signDebug.sign.slice(-6)}`,
+      "",
+      `Top-level keys: ${json ? Object.keys(json).slice(0, 25).join(", ") : "non-json"}`,
+      `Raw preview: ${truncateForTelegram(json || responseText, 700)}`
+    ];
+
+    const output = lines.join("\n");
+    for (let i = 0; i < output.length; i += 3500) {
+      await ctx.reply(output.slice(i, i + 3500));
+    }
+  } catch (error) {
+    console.error("Payment sign debug error:", error);
+    await ctx.reply(`Payment sign debug failed: ${error.message}`);
+  }
 }
 
 async function payCheckRawCommand(ctx) {
@@ -3407,6 +3577,7 @@ Admin:
 /paycheck - Manually check pending payments from UEEx API
 /paycheck_debug - Show payment API debug summary
 /paycheck_raw - Test payment API raw records with type/item_id variants
+/paycheck_sign_debug - Show safe signature debug info
 /lock_WC0001 - Lock match
 /hide_date_2026.06.19 - Hide all matches on a date
 /show_date_2026.06.19 - Show hidden matches on a date
@@ -3713,6 +3884,11 @@ bot.on("message", async (ctx) => {
 
     if (/^\/paycheck_raw$/i.test(cleaned)) {
       return payCheckRawCommand(ctx);
+    }
+
+
+    if (/^\/paycheck_sign_debug$/i.test(cleaned)) {
+      return payCheckSignDebugCommand(ctx);
     }
 
     if (/^\/pending(?:_(WC[A-Z0-9]+))?$/i.test(cleaned)) {
