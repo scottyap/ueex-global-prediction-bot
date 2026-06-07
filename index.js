@@ -38,6 +38,7 @@ const UEEX_SIGN_MODE = process.env.UEEX_SIGN_MODE || "query_secret_suffix";
 const UEEX_SIGN_SECRET_PARAM = process.env.UEEX_SIGN_SECRET_PARAM || "key";
 const UEEX_RECORD_LIMIT = Number(process.env.UEEX_RECORD_LIMIT || 200);
 const UEEX_RECORD_MAX_PAGES = Number(process.env.UEEX_RECORD_MAX_PAGES || 3);
+const UEEX_RAW_DEBUG_DAYS = Number(process.env.UEEX_RAW_DEBUG_DAYS || 14);
 const UEEX_REQUIRE_UID_MATCH = String(process.env.UEEX_REQUIRE_UID_MATCH || "true").toLowerCase() === "true";
 // receiver_perspective: type=1 records are queried from official receiver account; account UID = 1122031, counterparty UID = user UID.
 // sender_receiver: traditional transfer direction; from UID = user UID, to UID = 1122031.
@@ -1488,6 +1489,173 @@ async function payCheckCommand(ctx) {
   } catch (error) {
     console.error("Manual payment check error:", error);
     await ctx.reply(`Payment check failed: ${error.message}`);
+  }
+}
+
+
+function truncateForTelegram(value, maxLength = 900) {
+  const text = typeof value === "string" ? value : JSON.stringify(value, null, 2);
+  if (!text) return "";
+  return text.length <= maxLength ? text : `${text.slice(0, maxLength)}...`;
+}
+
+function buildRawDebugTimeRange(pendingOrders) {
+  const now = new Date();
+
+  if (pendingOrders && pendingOrders.length) {
+    const earliestCreatedAt = pendingOrders[0].created_at;
+    return {
+      startAt: new Date(new Date(earliestCreatedAt).getTime() - 60 * 60 * 1000),
+      endAt: now,
+      mode: "pending_orders"
+    };
+  }
+
+  return {
+    startAt: new Date(now.getTime() - UEEX_RAW_DEBUG_DAYS * 24 * 60 * 60 * 1000),
+    endAt: now,
+    mode: `${UEEX_RAW_DEBUG_DAYS}_days`
+  };
+}
+
+async function fetchUeexPaymentRawRecords({ startAt, endAt, paymentType, includeItemId = true, limit = 20, page = 1 }) {
+  if (!UEEX_API_BASE_URL || !UEEX_API_KEY || !UEEX_API_SECRET) {
+    throw new Error("UEEx API is not configured. Please set UEEX_API_BASE_URL, UEEX_API_KEY, and UEEX_API_SECRET.");
+  }
+
+  const extraParams = {
+    type: paymentType,
+    page,
+    limit,
+    start_time: apiTimeSeconds(startAt),
+    end_time: apiTimeSeconds(endAt)
+  };
+
+  if (includeItemId) {
+    extraParams.item_id = UEEX_PAYMENT_ITEM_ID;
+  }
+
+  const params = buildUeexApiParams(extraParams);
+  const formData = new FormData();
+  for (const [key, value] of Object.entries(params)) {
+    formData.append(key, String(value));
+  }
+
+  const response = await fetch(buildUeexUrl(UEEX_API_DEPOSIT_LIST_PATH), {
+    method: "POST",
+    body: formData
+  });
+
+  const responseText = await response.text();
+  let json;
+
+  try {
+    json = JSON.parse(responseText);
+  } catch (error) {
+    json = null;
+  }
+
+  const records = json ? getNestedArray(json) || [] : [];
+
+  return {
+    ok: response.ok,
+    httpStatus: response.status,
+    json,
+    responseText,
+    records,
+    normalizedRecords: records.map(normalizeApiRecord),
+    safeRequest: {
+      path: UEEX_API_DEPOSIT_LIST_PATH,
+      type: paymentType,
+      item_id: includeItemId ? UEEX_PAYMENT_ITEM_ID : "omitted",
+      page,
+      limit,
+      start_time: extraParams.start_time,
+      end_time: extraParams.end_time
+    }
+  };
+}
+
+async function payCheckRawCommand(ctx) {
+  if (!(await requireAdminControlChat(ctx))) return;
+
+  try {
+    const pendingOrders = await loadPendingOrdersForAutoConfirm();
+    const { startAt, endAt, mode } = buildRawDebugTimeRange(pendingOrders);
+
+    const scenarios = [
+      { label: `type=${UEEX_PAYMENT_TYPE}, item_id=${UEEX_PAYMENT_ITEM_ID}`, paymentType: UEEX_PAYMENT_TYPE, includeItemId: true },
+      { label: `type=${UEEX_PAYMENT_TYPE}, no item_id`, paymentType: UEEX_PAYMENT_TYPE, includeItemId: false },
+      { label: `type=${UEEX_PAYMENT_TYPE === 1 ? 2 : 1}, item_id=${UEEX_PAYMENT_ITEM_ID}`, paymentType: UEEX_PAYMENT_TYPE === 1 ? 2 : 1, includeItemId: true },
+      { label: `type=${UEEX_PAYMENT_TYPE === 1 ? 2 : 1}, no item_id`, paymentType: UEEX_PAYMENT_TYPE === 1 ? 2 : 1, includeItemId: false }
+    ];
+
+    const lines = [
+      "🧪 Payment Raw Debug",
+      "",
+      `Range mode: ${mode}`,
+      `Start: ${startAt.toISOString()}`,
+      `End: ${endAt.toISOString()}`,
+      `API path: ${UEEX_API_DEPOSIT_LIST_PATH}`,
+      `Receiver UID: ${UEEX_RECEIVER_UID}`,
+      `Pending orders: ${pendingOrders.length}`
+    ];
+
+    for (const scenario of scenarios) {
+      const raw = await fetchUeexPaymentRawRecords({
+        startAt,
+        endAt,
+        paymentType: scenario.paymentType,
+        includeItemId: scenario.includeItemId,
+        limit: 20,
+        page: 1
+      });
+
+      const code = raw.json ? raw.json.code ?? raw.json.status_code ?? raw.json.statusCode ?? "n/a" : "non-json";
+      const message = raw.json ? raw.json.msg || raw.json.message || raw.json.error || "" : truncateForTelegram(raw.responseText, 120);
+
+      lines.push(
+        "",
+        `Scenario: ${scenario.label}`,
+        `HTTP: ${raw.httpStatus}`,
+        `API code: ${code}`,
+        `API message: ${message || "empty"}`,
+        `Records: ${raw.records.length}`
+      );
+
+      if (raw.normalizedRecords[0]) {
+        const first = raw.normalizedRecords[0];
+        lines.push(
+          "First normalized record:",
+          `• remark: ${first.remark || "empty"}`,
+          `• amount: ${first.amount || "empty"}`,
+          `• status: ${first.status || "empty"}`,
+          `• item_id: ${first.itemId || "empty"}`,
+          `• exchange_type: ${first.exchangeType || "empty"}`,
+          `• account_uid: ${first.accountUid || "empty"}`,
+          `• counterparty_uid: ${first.counterpartyUid || "empty"}`,
+          `• from_uid: ${first.fromUid || "empty"}`,
+          `• to_uid: ${first.toUid || "empty"}`,
+          `Raw keys: ${Object.keys(first.raw || {}).slice(0, 25).join(", ") || "none"}`
+        );
+      } else if (raw.json) {
+        lines.push(`Top-level keys: ${Object.keys(raw.json || {}).slice(0, 25).join(", ") || "none"}`);
+        lines.push(`Raw preview: ${truncateForTelegram(raw.json, 500)}`);
+      }
+    }
+
+    const output = lines.join("\n");
+    const chunks = [];
+    for (let i = 0; i < output.length; i += 3500) {
+      chunks.push(output.slice(i, i + 3500));
+    }
+
+    for (const chunk of chunks) {
+      await ctx.reply(chunk);
+    }
+  } catch (error) {
+    console.error("Payment raw debug error:", error);
+    await ctx.reply(`Payment raw debug failed: ${error.message}`);
   }
 }
 
@@ -3238,6 +3406,7 @@ Admin:
 /mockpay_O000123_1150 - Mock auto payment test
 /paycheck - Manually check pending payments from UEEx API
 /paycheck_debug - Show payment API debug summary
+/paycheck_raw - Test payment API raw records with type/item_id variants
 /lock_WC0001 - Lock match
 /hide_date_2026.06.19 - Hide all matches on a date
 /show_date_2026.06.19 - Show hidden matches on a date
@@ -3539,6 +3708,11 @@ bot.on("message", async (ctx) => {
 
     if (/^\/paycheck_debug$/i.test(cleaned)) {
       return payCheckDebugCommand(ctx);
+    }
+
+
+    if (/^\/paycheck_raw$/i.test(cleaned)) {
+      return payCheckRawCommand(ctx);
     }
 
     if (/^\/pending(?:_(WC[A-Z0-9]+))?$/i.test(cleaned)) {
