@@ -1517,7 +1517,7 @@ async function payCheckDebugCommand(ctx) {
       `API path: ${UEEX_API_DEPOSIT_LIST_PATH}`,
       "",
       "Latest pending orders:",
-      ...pendingOrders.slice(0, 5).map((order) => `• ${order.order_code} | UID ${order.ueex_uid} | ${formatDisplayAmount(order.expected_amount)} ${order.currency || DEFAULT_CURRENCY} | ${order.status}`)
+      ...pendingOrders.slice(0, 5).map((order) => `• ${order.order_code} | UID ${order.ueex_uid} | ${formatAmount(order.expected_amount)} ${order.currency || DEFAULT_CURRENCY} | ${order.status}`)
     ];
 
     if (first) {
