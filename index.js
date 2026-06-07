@@ -28,6 +28,24 @@ const UEEX_PAYMENT_ITEM_ID = Number(process.env.UEEX_PAYMENT_ITEM_ID || 1304);
 const UEEX_RECEIVER_UID = process.env.UEEX_RECEIVER_UID || RECEIVER_UID;
 const UEEX_INTERNAL_EXCHANGE_TYPE = Number(process.env.UEEX_INTERNAL_EXCHANGE_TYPE || 1);
 const UEEX_SUCCESS_STATUS = process.env.UEEX_SUCCESS_STATUS || "success";
+const UEEX_API_BASE_URL = (process.env.UEEX_API_BASE_URL || "").replace(/\/$/, "");
+const UEEX_API_KEY = process.env.UEEX_API_KEY || "";
+const UEEX_API_SECRET = process.env.UEEX_API_SECRET || "";
+const UEEX_API_TOKEN = process.env.UEEX_API_TOKEN || "";
+const UEEX_API_DEPOSIT_LIST_PATH = process.env.UEEX_API_DEPOSIT_LIST_PATH || "/Assets/depositWithdrawList";
+const UEEX_SIGN_MODE = process.env.UEEX_SIGN_MODE || "query_secret_suffix";
+const UEEX_SIGN_SECRET_PARAM = process.env.UEEX_SIGN_SECRET_PARAM || "key";
+const UEEX_RECORD_LIMIT = Number(process.env.UEEX_RECORD_LIMIT || 200);
+const UEEX_RECORD_MAX_PAGES = Number(process.env.UEEX_RECORD_MAX_PAGES || 3);
+const UEEX_REQUIRE_UID_MATCH = String(process.env.UEEX_REQUIRE_UID_MATCH || "true").toLowerCase() === "true";
+const UEEX_FIELD_REMARK = process.env.UEEX_FIELD_REMARK || "";
+const UEEX_FIELD_AMOUNT = process.env.UEEX_FIELD_AMOUNT || "";
+const UEEX_FIELD_STATUS = process.env.UEEX_FIELD_STATUS || "";
+const UEEX_FIELD_ITEM_ID = process.env.UEEX_FIELD_ITEM_ID || "";
+const UEEX_FIELD_FROM_UID = process.env.UEEX_FIELD_FROM_UID || "";
+const UEEX_FIELD_TO_UID = process.env.UEEX_FIELD_TO_UID || "";
+const UEEX_FIELD_EXCHANGE_ID = process.env.UEEX_FIELD_EXCHANGE_ID || "";
+const UEEX_FIELD_EXCHANGE_TYPE = process.env.UEEX_FIELD_EXCHANGE_TYPE || "";
 const WORLDCUP_IMAGE_URL = process.env.WORLDCUP_IMAGE_URL || "";
 const PENDING_ORDER_IMAGE_URL = process.env.PENDING_ORDER_IMAGE_URL || "";
 const ORDER_CONFIRMED_IMAGE_URL = process.env.ORDER_CONFIRMED_IMAGE_URL || "";
@@ -1074,6 +1092,370 @@ async function updateLiveMatchMessage(matchCode) {
   }
 }
 
+
+function md5Upper(input) {
+  return crypto.createHash("md5").update(String(input)).digest("hex").toUpperCase();
+}
+
+function getNonEmptyParams(params) {
+  return Object.fromEntries(
+    Object.entries(params || {}).filter(([, value]) => value !== undefined && value !== null && String(value) !== "")
+  );
+}
+
+function createUeexSign(params) {
+  const cleanParams = getNonEmptyParams(params);
+  const entries = Object.entries(cleanParams)
+    .filter(([key]) => key !== "sign")
+    .sort(([a], [b]) => a.localeCompare(b));
+
+  let raw;
+
+  if (UEEX_SIGN_MODE === "concat_secret_suffix") {
+    raw = `${entries.map(([key, value]) => `${key}${value}`).join("")}${UEEX_API_SECRET}`;
+  } else if (UEEX_SIGN_MODE === "concat_secret_prefix") {
+    raw = `${UEEX_API_SECRET}${entries.map(([key, value]) => `${key}${value}`).join("")}`;
+  } else if (UEEX_SIGN_MODE === "query_secret_prefix") {
+    raw = `${UEEX_SIGN_SECRET_PARAM}=${UEEX_API_SECRET}&${entries.map(([key, value]) => `${key}=${value}`).join("&")}`;
+  } else {
+    raw = `${entries.map(([key, value]) => `${key}=${value}`).join("&")}&${UEEX_SIGN_SECRET_PARAM}=${UEEX_API_SECRET}`;
+  }
+
+  return md5Upper(raw);
+}
+
+function buildUeexApiParams(extraParams = {}) {
+  const nonce = crypto.randomBytes(8).toString("hex");
+  const timestamp = String(Date.now());
+
+  const params = getNonEmptyParams({
+    api_key: UEEX_API_KEY,
+    nonce,
+    timestamp,
+    token: UEEX_API_TOKEN,
+    ...extraParams
+  });
+
+  return {
+    ...params,
+    sign: createUeexSign(params)
+  };
+}
+
+function buildUeexUrl(path) {
+  const cleanPath = String(path || "").startsWith("/") ? String(path || "") : `/${path}`;
+  return `${UEEX_API_BASE_URL}${cleanPath}`;
+}
+
+function getNestedArray(value) {
+  if (Array.isArray(value)) return value;
+  if (!value || typeof value !== "object") return null;
+
+  const candidateKeys = ["data", "list", "records", "rows", "items", "result"];
+
+  for (const key of candidateKeys) {
+    if (Array.isArray(value[key])) return value[key];
+  }
+
+  for (const key of candidateKeys) {
+    const nested = getNestedArray(value[key]);
+    if (nested) return nested;
+  }
+
+  return null;
+}
+
+function pickField(record, envField, candidates) {
+  if (!record || typeof record !== "object") return undefined;
+
+  if (envField && Object.prototype.hasOwnProperty.call(record, envField)) {
+    return record[envField];
+  }
+
+  for (const key of candidates) {
+    if (Object.prototype.hasOwnProperty.call(record, key)) {
+      return record[key];
+    }
+  }
+
+  return undefined;
+}
+
+function normalizeApiRecord(record) {
+  const remark = pickField(record, UEEX_FIELD_REMARK, ["remark", "memo", "note", "transfer_remark", "chain_tag"]);
+  const amount = pickField(record, UEEX_FIELD_AMOUNT, ["num", "amount", "quantity", "value", "money", "volume"]);
+  const status = pickField(record, UEEX_FIELD_STATUS, ["status", "state", "audit_status"]);
+  const itemId = pickField(record, UEEX_FIELD_ITEM_ID, ["item_id", "itemId", "coin_id", "asset_id", "currency_id"]);
+  const exchangeType = pickField(record, UEEX_FIELD_EXCHANGE_TYPE, ["exchange_type", "exchangeType", "transfer_type", "address_type"]);
+  const exchangeId = pickField(record, UEEX_FIELD_EXCHANGE_ID, ["exchange_id", "exchangeId", "id", "record_id", "order_id", "tx_id", "txid", "hash"]);
+  const fromUid = pickField(record, UEEX_FIELD_FROM_UID, ["from_uid", "from_user_id", "from_userid", "sender_uid", "sender_user_id", "client_user_id", "clientUserId", "user_id"]);
+  const toUid = pickField(record, UEEX_FIELD_TO_UID, ["to_uid", "to_user_id", "to_userid", "receiver_uid", "receive_uid", "target_uid", "target_user_id", "collection_uid"]);
+  const txid = pickField(record, "", ["txid", "tx_id", "hash", "transaction_hash"]);
+
+  const fallbackExchangeId = md5Upper([
+    remark,
+    fromUid,
+    toUid,
+    amount,
+    itemId,
+    status,
+    pickField(record, "", ["create_time", "created_at", "time"])
+  ].filter((item) => item !== undefined && item !== null && String(item) !== "").join("|"));
+
+  return {
+    raw: record,
+    exchangeId: exchangeId ? String(exchangeId) : fallbackExchangeId,
+    txid: txid ? String(txid) : null,
+    remark: remark !== undefined && remark !== null ? String(remark).trim() : "",
+    amount: amount !== undefined && amount !== null ? String(amount).trim() : "",
+    status: status !== undefined && status !== null ? String(status).trim() : "",
+    itemId: itemId !== undefined && itemId !== null ? String(itemId).trim() : "",
+    exchangeType: exchangeType !== undefined && exchangeType !== null ? String(exchangeType).trim() : "",
+    fromUid: fromUid !== undefined && fromUid !== null ? String(fromUid).trim() : "",
+    toUid: toUid !== undefined && toUid !== null ? String(toUid).trim() : ""
+  };
+}
+
+function apiTimeSeconds(dateValue) {
+  const date = dateValue ? new Date(dateValue) : new Date();
+  return String(Math.floor(date.getTime() / 1000));
+}
+
+async function fetchUeexPaymentRecords(startAt, endAt = new Date()) {
+  if (!UEEX_API_BASE_URL || !UEEX_API_KEY || !UEEX_API_SECRET) {
+    throw new Error("UEEx API is not configured. Please set UEEX_API_BASE_URL, UEEX_API_KEY, and UEEX_API_SECRET.");
+  }
+
+  const allRecords = [];
+
+  for (let page = 1; page <= UEEX_RECORD_MAX_PAGES; page += 1) {
+    const params = buildUeexApiParams({
+      item_id: UEEX_PAYMENT_ITEM_ID,
+      type: 1,
+      page,
+      limit: UEEX_RECORD_LIMIT,
+      start_time: apiTimeSeconds(startAt),
+      end_time: apiTimeSeconds(endAt)
+    });
+
+    const formData = new FormData();
+    for (const [key, value] of Object.entries(params)) {
+      formData.append(key, String(value));
+    }
+
+    const response = await fetch(buildUeexUrl(UEEX_API_DEPOSIT_LIST_PATH), {
+      method: "POST",
+      body: formData
+    });
+
+    const responseText = await response.text();
+    let json;
+
+    try {
+      json = JSON.parse(responseText);
+    } catch (error) {
+      throw new Error(`UEEx API returned non-JSON response: ${responseText.slice(0, 200)}`);
+    }
+
+    if (!response.ok) {
+      throw new Error(`UEEx API HTTP ${response.status}: ${responseText.slice(0, 300)}`);
+    }
+
+    const code = json.code ?? json.status_code ?? json.statusCode;
+    const apiMessage = json.msg || json.message || json.error;
+
+    if (code !== undefined && ![0, 1, 200, "0", "1", "200", "success", "SUCCESS"].includes(code)) {
+      throw new Error(`UEEx API error ${code}: ${apiMessage || responseText.slice(0, 300)}`);
+    }
+
+    const records = getNestedArray(json) || [];
+    allRecords.push(...records.map(normalizeApiRecord));
+
+    if (records.length < UEEX_RECORD_LIMIT) break;
+  }
+
+  return allRecords;
+}
+
+function decimalEquals(a, b) {
+  try {
+    return new Decimal(a || 0).eq(new Decimal(b || 0));
+  } catch (error) {
+    return false;
+  }
+}
+
+function paymentRecordMatchesOrder(record, order) {
+  if (!record) return { ok: false, reason: "Record missing" };
+  if (record.remark !== order.order_code) return { ok: false, reason: "Remark does not match order ID" };
+  if (!decimalEquals(record.amount, order.expected_amount)) return { ok: false, reason: "Amount does not match order amount" };
+
+  if (String(record.status).toLowerCase() !== String(UEEX_SUCCESS_STATUS).toLowerCase()) {
+    return { ok: false, reason: "Payment status is not success" };
+  }
+
+  if (record.itemId && String(record.itemId) !== String(UEEX_PAYMENT_ITEM_ID)) {
+    return { ok: false, reason: "Item ID does not match UE" };
+  }
+
+  if (record.exchangeType && String(record.exchangeType) !== String(UEEX_INTERNAL_EXCHANGE_TYPE)) {
+    return { ok: false, reason: "Exchange type is not internal transfer" };
+  }
+
+  if (UEEX_REQUIRE_UID_MATCH) {
+    if (!record.fromUid) return { ok: false, reason: "Payment sender UID field missing" };
+    if (!record.toUid) return { ok: false, reason: "Payment receiver UID field missing" };
+    if (String(record.fromUid) !== String(order.ueex_uid)) return { ok: false, reason: "Sender UID does not match order UID" };
+    if (String(record.toUid) !== String(UEEX_RECEIVER_UID)) return { ok: false, reason: "Receiver UID does not match official receiver UID" };
+  }
+
+  return { ok: true, reason: "matched" };
+}
+
+async function isPaymentRecordAlreadyUsed(exchangeId) {
+  const { data, error } = await supabase
+    .from("wc_payment_records")
+    .select("matched_order_code")
+    .eq("exchange_id", exchangeId)
+    .maybeSingle();
+
+  if (error) {
+    console.error("Check payment record usage error:", error.message);
+    return false;
+  }
+
+  return Boolean(data?.matched_order_code);
+}
+
+async function savePaymentRecord(record, orderCode) {
+  const payload = {
+    exchange_id: record.exchangeId,
+    remark: record.remark,
+    from_uid: record.fromUid || null,
+    to_uid: record.toUid || null,
+    amount: record.amount || 0,
+    currency: DEFAULT_CURRENCY,
+    item_id: record.itemId ? Number(record.itemId) : UEEX_PAYMENT_ITEM_ID,
+    exchange_type: record.exchangeType ? Number(record.exchangeType) : UEEX_INTERNAL_EXCHANGE_TYPE,
+    status: record.status,
+    raw_data: record.raw,
+    matched_order_code: orderCode
+  };
+
+  const { error } = await supabase
+    .from("wc_payment_records")
+    .upsert(payload, { onConflict: "exchange_id" });
+
+  if (error) {
+    throw new Error(`Failed to save payment record: ${error.message}`);
+  }
+}
+
+async function loadPendingOrdersForAutoConfirm() {
+  const { data, error } = await supabase
+    .from("wc_orders")
+    .select("*")
+    .eq("status", "pending")
+    .order("created_at", { ascending: true })
+    .limit(200);
+
+  if (error) {
+    throw new Error(`Failed to load pending orders: ${error.message}`);
+  }
+
+  return data || [];
+}
+
+async function autoConfirmPendingOrders(ctx = null) {
+  if (!AUTO_CONFIRM_ENABLED) {
+    if (ctx) await ctx.reply("Auto confirmation is OFF. Set AUTO_CONFIRM_ENABLED=true to enable it.");
+    return { checked: 0, confirmed: 0, message: "Auto confirmation is OFF." };
+  }
+
+  const pendingOrders = await loadPendingOrdersForAutoConfirm();
+
+  if (!pendingOrders.length) {
+    if (ctx) await ctx.reply("No pending orders to check.");
+    return { checked: 0, confirmed: 0, message: "No pending orders." };
+  }
+
+  const earliestCreatedAt = pendingOrders[0].created_at;
+  const startAt = new Date(new Date(earliestCreatedAt).getTime() - 60 * 60 * 1000);
+  const records = await fetchUeexPaymentRecords(startAt, new Date());
+
+  let confirmed = 0;
+  const errors = [];
+
+  for (const order of pendingOrders) {
+    const matchingRecords = records.filter((record) => record.remark === order.order_code);
+
+    if (!matchingRecords.length) continue;
+
+    for (const record of matchingRecords) {
+      const matchResult = paymentRecordMatchesOrder(record, order);
+
+      if (!matchResult.ok) {
+        await supabase
+          .from("wc_orders")
+          .update({
+            payment_checked_at: new Date().toISOString(),
+            auto_confirm_error: matchResult.reason,
+            updated_at: new Date().toISOString()
+          })
+          .eq("order_code", order.order_code);
+        errors.push(`${order.order_code}: ${matchResult.reason}`);
+        continue;
+      }
+
+      const used = await isPaymentRecordAlreadyUsed(record.exchangeId);
+      if (used) {
+        errors.push(`${order.order_code}: payment record already used`);
+        continue;
+      }
+
+      await savePaymentRecord(record, order.order_code);
+      await confirmOrderByCode(ctx, order.order_code, new Decimal(record.amount), {
+        autoConfirmed: true,
+        paymentRecord: record
+      });
+      confirmed += 1;
+      break;
+    }
+  }
+
+  const message = `Payment check completed. Pending checked: ${pendingOrders.length}. Records fetched: ${records.length}. Auto confirmed: ${confirmed}.${errors.length ? `\n\nSkipped:\n${errors.slice(0, 10).join("\n")}` : ""}`;
+
+  if (ctx) await ctx.reply(message);
+
+  return { checked: pendingOrders.length, confirmed, message };
+}
+
+function startAutoPaymentChecker() {
+  if (!AUTO_CONFIRM_ENABLED) return;
+  if (!PAYMENT_CHECK_INTERVAL_MS || PAYMENT_CHECK_INTERVAL_MS < 10000) return;
+
+  setInterval(async () => {
+    try {
+      await autoConfirmPendingOrders();
+    } catch (error) {
+      console.error("Auto payment checker error:", error.message);
+      await notifyAdminGroup(`⚠️ Auto payment checker error:\n${error.message}`);
+    }
+  }, PAYMENT_CHECK_INTERVAL_MS);
+}
+
+async function payCheckCommand(ctx) {
+  if (!(await requireAdminControlChat(ctx))) return;
+
+  try {
+    await ctx.reply("Checking pending payments from UEEx API...");
+    await autoConfirmPendingOrders(ctx);
+  } catch (error) {
+    console.error("Manual payment check error:", error);
+    await ctx.reply(`Payment check failed: ${error.message}`);
+  }
+}
+
 async function autoVoidExpiredPendingOrders(matchInput) {
   const match = typeof matchInput === "string" ? await getMatch(matchInput) : matchInput;
 
@@ -1667,7 +2049,18 @@ async function cancelPendingOrder(ctx, orderCode) {
 }
 
 async function confirmOrderByCode(ctx, orderCode, amount, options = {}) {
-  const { autoConfirmed = false } = options;
+  const { autoConfirmed = false, paymentRecord = null } = options;
+
+  if (!ctx) {
+    ctx = {
+      from: null,
+      chat: null,
+      reply: async (message) => {
+        console.log("Auto confirmation:", message);
+        return null;
+      }
+    };
+  }
 
   const { data: order, error: orderError } = await supabase
     .from("wc_orders")
@@ -1689,17 +2082,28 @@ async function confirmOrderByCode(ctx, orderCode, amount, options = {}) {
     return ctx.reply("Related match not found.");
   }
 
+  const updatePayload = {
+    confirmed_amount: amount.toFixed(),
+    status: "confirmed",
+    confirmed_by: ctx.from?.id || null,
+    confirmed_at: new Date().toISOString(),
+    auto_confirmed: autoConfirmed,
+    payment_checked_at: new Date().toISOString(),
+    auto_confirm_error: null,
+    updated_at: new Date().toISOString()
+  };
+
+  if (paymentRecord) {
+    updatePayload.payment_exchange_id = paymentRecord.exchangeId || null;
+    updatePayload.payment_txid = paymentRecord.txid || null;
+    updatePayload.payment_from_uid = paymentRecord.fromUid || null;
+    updatePayload.payment_to_uid = paymentRecord.toUid || null;
+    updatePayload.payment_remark = paymentRecord.remark || orderCode;
+  }
+
   const { error: updateError } = await supabase
     .from("wc_orders")
-    .update({
-      confirmed_amount: amount.toFixed(),
-      status: "confirmed",
-      confirmed_by: ctx.from?.id || null,
-      confirmed_at: new Date().toISOString(),
-      auto_confirmed: autoConfirmed,
-      payment_checked_at: new Date().toISOString(),
-      updated_at: new Date().toISOString()
-    })
+    .update(updatePayload)
     .eq("order_code", orderCode);
 
   if (updateError) {
@@ -2740,6 +3144,7 @@ Admin:
 /worldcup_MEX_ZAF_7:7:51_0:0_5:5_Others_2026.06.11_23:00_UTC+4_Group - Create match and post it to World Cup topic
 /confirm_O000123_1150 - Confirm payment
 /mockpay_O000123_1150 - Mock auto payment test
+/paycheck - Manually check pending payments from UEEx API
 /lock_WC0001 - Lock match
 /hide_date_2026.06.19 - Hide all matches on a date
 /show_date_2026.06.19 - Show hidden matches on a date
@@ -3035,6 +3440,10 @@ bot.on("message", async (ctx) => {
       return settleMatch(ctx, cleaned);
     }
 
+    if (/^\/paycheck$/i.test(cleaned)) {
+      return payCheckCommand(ctx);
+    }
+
     if (/^\/pending(?:_(WC[A-Z0-9]+))?$/i.test(cleaned)) {
       const pendingMatch = cleaned.match(/^\/pending(?:_(WC[A-Z0-9]+))?$/i);
       return showPendingOrders(ctx, pendingMatch?.[1] || null);
@@ -3159,8 +3568,9 @@ app.listen(PORT, async () => {
     }
 
     startLiveMatchUpdater();
+    startAutoPaymentChecker();
     console.log(`Live match updater interval: ${LIVE_UPDATE_INTERVAL_MS} ms`);
-    console.log(`Auto confirmation enabled: ${AUTO_CONFIRM_ENABLED ? "ON" : "OFF"}; interval: ${PAYMENT_CHECK_INTERVAL_MS} ms; item_id: ${UEEX_PAYMENT_ITEM_ID}; receiver_uid: ${UEEX_RECEIVER_UID}; internal_exchange_type: ${UEEX_INTERNAL_EXCHANGE_TYPE}; success_status: ${UEEX_SUCCESS_STATUS}`);
+    console.log(`Auto confirmation enabled: ${AUTO_CONFIRM_ENABLED ? "ON" : "OFF"}; interval: ${PAYMENT_CHECK_INTERVAL_MS} ms; item_id: ${UEEX_PAYMENT_ITEM_ID}; receiver_uid: ${UEEX_RECEIVER_UID}; internal_exchange_type: ${UEEX_INTERNAL_EXCHANGE_TYPE}; success_status: ${UEEX_SUCCESS_STATUS}; api_base: ${UEEX_API_BASE_URL || "not set"}; path: ${UEEX_API_DEPOSIT_LIST_PATH}`);
   } catch (error) {
     console.error("Startup error:", error);
   }
