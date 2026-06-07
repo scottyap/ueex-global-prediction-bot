@@ -25,6 +25,7 @@ const BOT_USERNAME = (process.env.BOT_USERNAME || "").replace(/^@/, "");
 const AUTO_CONFIRM_ENABLED = String(process.env.AUTO_CONFIRM_ENABLED || "false").toLowerCase() === "true";
 const PAYMENT_CHECK_INTERVAL_MS = Number(process.env.PAYMENT_CHECK_INTERVAL_MS || 30000);
 const UEEX_PAYMENT_ITEM_ID = Number(process.env.UEEX_PAYMENT_ITEM_ID || 1304);
+const UEEX_PAYMENT_TYPE = Number(process.env.UEEX_PAYMENT_TYPE || 1);
 const UEEX_RECEIVER_UID = process.env.UEEX_RECEIVER_UID || RECEIVER_UID;
 const UEEX_INTERNAL_EXCHANGE_TYPE = Number(process.env.UEEX_INTERNAL_EXCHANGE_TYPE || 1);
 const UEEX_SUCCESS_STATUS = process.env.UEEX_SUCCESS_STATUS || "success";
@@ -38,12 +39,18 @@ const UEEX_SIGN_SECRET_PARAM = process.env.UEEX_SIGN_SECRET_PARAM || "key";
 const UEEX_RECORD_LIMIT = Number(process.env.UEEX_RECORD_LIMIT || 200);
 const UEEX_RECORD_MAX_PAGES = Number(process.env.UEEX_RECORD_MAX_PAGES || 3);
 const UEEX_REQUIRE_UID_MATCH = String(process.env.UEEX_REQUIRE_UID_MATCH || "true").toLowerCase() === "true";
+// receiver_perspective: type=1 records are queried from official receiver account; account UID = 1122031, counterparty UID = user UID.
+// sender_receiver: traditional transfer direction; from UID = user UID, to UID = 1122031.
+// either: accept either of the above two UID directions.
+const UEEX_UID_MATCH_MODE = process.env.UEEX_UID_MATCH_MODE || "receiver_perspective";
 const UEEX_FIELD_REMARK = process.env.UEEX_FIELD_REMARK || "";
 const UEEX_FIELD_AMOUNT = process.env.UEEX_FIELD_AMOUNT || "";
 const UEEX_FIELD_STATUS = process.env.UEEX_FIELD_STATUS || "";
 const UEEX_FIELD_ITEM_ID = process.env.UEEX_FIELD_ITEM_ID || "";
 const UEEX_FIELD_FROM_UID = process.env.UEEX_FIELD_FROM_UID || "";
 const UEEX_FIELD_TO_UID = process.env.UEEX_FIELD_TO_UID || "";
+const UEEX_FIELD_ACCOUNT_UID = process.env.UEEX_FIELD_ACCOUNT_UID || "";
+const UEEX_FIELD_COUNTERPARTY_UID = process.env.UEEX_FIELD_COUNTERPARTY_UID || "";
 const UEEX_FIELD_EXCHANGE_ID = process.env.UEEX_FIELD_EXCHANGE_ID || "";
 const UEEX_FIELD_EXCHANGE_TYPE = process.env.UEEX_FIELD_EXCHANGE_TYPE || "";
 const WORLDCUP_IMAGE_URL = process.env.WORLDCUP_IMAGE_URL || "";
@@ -1189,13 +1196,17 @@ function normalizeApiRecord(record) {
   const exchangeType = pickField(record, UEEX_FIELD_EXCHANGE_TYPE, ["exchange_type", "exchangeType", "transfer_type", "address_type"]);
   const exchangeId = pickField(record, UEEX_FIELD_EXCHANGE_ID, ["exchange_id", "exchangeId", "id", "record_id", "order_id", "tx_id", "txid", "hash"]);
   const fromUid = pickField(record, UEEX_FIELD_FROM_UID, ["from_uid", "from_user_id", "from_userid", "sender_uid", "sender_user_id", "client_user_id", "clientUserId", "user_id"]);
-  const toUid = pickField(record, UEEX_FIELD_TO_UID, ["to_uid", "to_user_id", "to_userid", "receiver_uid", "receive_uid", "target_uid", "target_user_id", "collection_uid"]);
+  const toUid = pickField(record, UEEX_FIELD_TO_UID, ["to_uid", "to_user_id", "to_userid", "receiver_uid", "receive_uid", "target_uid", "target_user_id", "collection_uid", "counterparty_uid", "counterparty_user_id", "opposite_uid", "opposite_user_id", "other_uid", "other_user_id", "peer_uid", "peer_user_id"]);
+  const accountUid = pickField(record, UEEX_FIELD_ACCOUNT_UID, ["account_uid", "account_user_id", "client_user_id", "clientUserId", "user_uid", "uid", "user_id"]);
+  const counterpartyUid = pickField(record, UEEX_FIELD_COUNTERPARTY_UID, ["counterparty_uid", "counterparty_user_id", "opposite_uid", "opposite_user_id", "other_uid", "other_user_id", "peer_uid", "peer_user_id", "target_uid", "target_user_id", "to_uid", "to_user_id"]);
   const txid = pickField(record, "", ["txid", "tx_id", "hash", "transaction_hash"]);
 
   const fallbackExchangeId = md5Upper([
     remark,
     fromUid,
     toUid,
+    accountUid,
+    counterpartyUid,
     amount,
     itemId,
     status,
@@ -1212,7 +1223,9 @@ function normalizeApiRecord(record) {
     itemId: itemId !== undefined && itemId !== null ? String(itemId).trim() : "",
     exchangeType: exchangeType !== undefined && exchangeType !== null ? String(exchangeType).trim() : "",
     fromUid: fromUid !== undefined && fromUid !== null ? String(fromUid).trim() : "",
-    toUid: toUid !== undefined && toUid !== null ? String(toUid).trim() : ""
+    toUid: toUid !== undefined && toUid !== null ? String(toUid).trim() : "",
+    accountUid: accountUid !== undefined && accountUid !== null ? String(accountUid).trim() : "",
+    counterpartyUid: counterpartyUid !== undefined && counterpartyUid !== null ? String(counterpartyUid).trim() : ""
   };
 }
 
@@ -1231,7 +1244,7 @@ async function fetchUeexPaymentRecords(startAt, endAt = new Date()) {
   for (let page = 1; page <= UEEX_RECORD_MAX_PAGES; page += 1) {
     const params = buildUeexApiParams({
       item_id: UEEX_PAYMENT_ITEM_ID,
-      type: 1,
+      type: UEEX_PAYMENT_TYPE,
       page,
       limit: UEEX_RECORD_LIMIT,
       start_time: apiTimeSeconds(startAt),
@@ -1303,10 +1316,30 @@ function paymentRecordMatchesOrder(record, order) {
   }
 
   if (UEEX_REQUIRE_UID_MATCH) {
-    if (!record.fromUid) return { ok: false, reason: "Payment sender UID field missing" };
-    if (!record.toUid) return { ok: false, reason: "Payment receiver UID field missing" };
-    if (String(record.fromUid) !== String(order.ueex_uid)) return { ok: false, reason: "Sender UID does not match order UID" };
-    if (String(record.toUid) !== String(UEEX_RECEIVER_UID)) return { ok: false, reason: "Receiver UID does not match official receiver UID" };
+    const userUid = String(order.ueex_uid);
+    const receiverUid = String(UEEX_RECEIVER_UID);
+
+    const directFromUid = String(record.fromUid || "");
+    const directToUid = String(record.toUid || "");
+    const accountUid = String(record.accountUid || record.fromUid || "");
+    const counterpartyUid = String(record.counterpartyUid || record.toUid || "");
+
+    const directMatch = directFromUid === userUid && directToUid === receiverUid;
+    const receiverPerspectiveMatch = accountUid === receiverUid && counterpartyUid === userUid;
+
+    if (UEEX_UID_MATCH_MODE === "sender_receiver") {
+      if (!directFromUid) return { ok: false, reason: "Payment sender UID field missing" };
+      if (!directToUid) return { ok: false, reason: "Payment receiver UID field missing" };
+      if (!directMatch) return { ok: false, reason: "Sender/receiver UID does not match order" };
+    } else if (UEEX_UID_MATCH_MODE === "either") {
+      if (!directMatch && !receiverPerspectiveMatch) {
+        return { ok: false, reason: "UID does not match order in either receiver-perspective or sender-receiver mode" };
+      }
+    } else {
+      if (!accountUid) return { ok: false, reason: "Payment account UID field missing" };
+      if (!counterpartyUid) return { ok: false, reason: "Payment counterparty UID field missing" };
+      if (!receiverPerspectiveMatch) return { ok: false, reason: "Receiver account/counterparty UID does not match order" };
+    }
   }
 
   return { ok: true, reason: "matched" };
@@ -1331,8 +1364,8 @@ async function savePaymentRecord(record, orderCode) {
   const payload = {
     exchange_id: record.exchangeId,
     remark: record.remark,
-    from_uid: record.fromUid || null,
-    to_uid: record.toUid || null,
+    from_uid: record.paymentFromUid || record.fromUid || record.counterpartyUid || null,
+    to_uid: record.paymentToUid || record.toUid || record.accountUid || null,
     amount: record.amount || 0,
     currency: DEFAULT_CURRENCY,
     item_id: record.itemId ? Number(record.itemId) : UEEX_PAYMENT_ITEM_ID,
@@ -1413,6 +1446,8 @@ async function autoConfirmPendingOrders(ctx = null) {
         continue;
       }
 
+      record.paymentFromUid = order.ueex_uid;
+      record.paymentToUid = UEEX_RECEIVER_UID;
       await savePaymentRecord(record, order.order_code);
       await confirmOrderByCode(ctx, order.order_code, new Decimal(record.amount), {
         autoConfirmed: true,
@@ -1453,6 +1488,63 @@ async function payCheckCommand(ctx) {
   } catch (error) {
     console.error("Manual payment check error:", error);
     await ctx.reply(`Payment check failed: ${error.message}`);
+  }
+}
+
+async function payCheckDebugCommand(ctx) {
+  if (!(await requireAdminControlChat(ctx))) return;
+
+  try {
+    const pendingOrders = await loadPendingOrdersForAutoConfirm();
+    if (!pendingOrders.length) {
+      return ctx.reply("No pending orders to debug.");
+    }
+
+    const earliestCreatedAt = pendingOrders[0].created_at;
+    const startAt = new Date(new Date(earliestCreatedAt).getTime() - 60 * 60 * 1000);
+    const records = await fetchUeexPaymentRecords(startAt, new Date());
+    const first = records[0] || null;
+
+    const lines = [
+      "🧪 Payment Check Debug",
+      "",
+      `Pending orders: ${pendingOrders.length}`,
+      `Records fetched: ${records.length}`,
+      `Payment type: ${UEEX_PAYMENT_TYPE}`,
+      `UID match mode: ${UEEX_UID_MATCH_MODE}`,
+      `Item ID: ${UEEX_PAYMENT_ITEM_ID}`,
+      `Receiver UID: ${UEEX_RECEIVER_UID}`,
+      `API path: ${UEEX_API_DEPOSIT_LIST_PATH}`,
+      "",
+      "Latest pending orders:",
+      ...pendingOrders.slice(0, 5).map((order) => `• ${order.order_code} | UID ${order.ueex_uid} | ${formatDisplayAmount(order.expected_amount)} ${order.currency || DEFAULT_CURRENCY} | ${order.status}`)
+    ];
+
+    if (first) {
+      lines.push(
+        "",
+        "First normalized API record:",
+        `• remark: ${first.remark || "empty"}`,
+        `• amount: ${first.amount || "empty"}`,
+        `• status: ${first.status || "empty"}`,
+        `• item_id: ${first.itemId || "empty"}`,
+        `• exchange_type: ${first.exchangeType || "empty"}`,
+        `• from_uid: ${first.fromUid || "empty"}`,
+        `• to_uid: ${first.toUid || "empty"}`,
+        `• account_uid: ${first.accountUid || "empty"}`,
+        `• counterparty_uid: ${first.counterpartyUid || "empty"}`,
+        `• exchange_id: ${first.exchangeId || "empty"}`,
+        "",
+        `Raw keys: ${Object.keys(first.raw || {}).slice(0, 30).join(", ")}`
+      );
+    } else {
+      lines.push("", "No records returned by the API for the queried time range.");
+    }
+
+    return ctx.reply(lines.join("\n"));
+  } catch (error) {
+    console.error("Payment debug error:", error);
+    return ctx.reply(`Payment debug failed: ${error.message}`);
   }
 }
 
@@ -2096,8 +2188,8 @@ async function confirmOrderByCode(ctx, orderCode, amount, options = {}) {
   if (paymentRecord) {
     updatePayload.payment_exchange_id = paymentRecord.exchangeId || null;
     updatePayload.payment_txid = paymentRecord.txid || null;
-    updatePayload.payment_from_uid = paymentRecord.fromUid || null;
-    updatePayload.payment_to_uid = paymentRecord.toUid || null;
+    updatePayload.payment_from_uid = paymentRecord.paymentFromUid || paymentRecord.fromUid || paymentRecord.counterpartyUid || null;
+    updatePayload.payment_to_uid = paymentRecord.paymentToUid || paymentRecord.toUid || paymentRecord.accountUid || null;
     updatePayload.payment_remark = paymentRecord.remark || orderCode;
   }
 
@@ -3145,6 +3237,7 @@ Admin:
 /confirm_O000123_1150 - Confirm payment
 /mockpay_O000123_1150 - Mock auto payment test
 /paycheck - Manually check pending payments from UEEx API
+/paycheck_debug - Show payment API debug summary
 /lock_WC0001 - Lock match
 /hide_date_2026.06.19 - Hide all matches on a date
 /show_date_2026.06.19 - Show hidden matches on a date
@@ -3444,6 +3537,10 @@ bot.on("message", async (ctx) => {
       return payCheckCommand(ctx);
     }
 
+    if (/^\/paycheck_debug$/i.test(cleaned)) {
+      return payCheckDebugCommand(ctx);
+    }
+
     if (/^\/pending(?:_(WC[A-Z0-9]+))?$/i.test(cleaned)) {
       const pendingMatch = cleaned.match(/^\/pending(?:_(WC[A-Z0-9]+))?$/i);
       return showPendingOrders(ctx, pendingMatch?.[1] || null);
@@ -3570,7 +3667,7 @@ app.listen(PORT, async () => {
     startLiveMatchUpdater();
     startAutoPaymentChecker();
     console.log(`Live match updater interval: ${LIVE_UPDATE_INTERVAL_MS} ms`);
-    console.log(`Auto confirmation enabled: ${AUTO_CONFIRM_ENABLED ? "ON" : "OFF"}; interval: ${PAYMENT_CHECK_INTERVAL_MS} ms; item_id: ${UEEX_PAYMENT_ITEM_ID}; receiver_uid: ${UEEX_RECEIVER_UID}; internal_exchange_type: ${UEEX_INTERNAL_EXCHANGE_TYPE}; success_status: ${UEEX_SUCCESS_STATUS}; api_base: ${UEEX_API_BASE_URL || "not set"}; path: ${UEEX_API_DEPOSIT_LIST_PATH}`);
+    console.log(`Auto confirmation enabled: ${AUTO_CONFIRM_ENABLED ? "ON" : "OFF"}; interval: ${PAYMENT_CHECK_INTERVAL_MS} ms; item_id: ${UEEX_PAYMENT_ITEM_ID}; payment_type: ${UEEX_PAYMENT_TYPE}; receiver_uid: ${UEEX_RECEIVER_UID}; uid_match_mode: ${UEEX_UID_MATCH_MODE}; internal_exchange_type: ${UEEX_INTERNAL_EXCHANGE_TYPE}; success_status: ${UEEX_SUCCESS_STATUS}; api_base: ${UEEX_API_BASE_URL || "not set"}; path: ${UEEX_API_DEPOSIT_LIST_PATH}`);
   } catch (error) {
     console.error("Startup error:", error);
   }
