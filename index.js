@@ -1291,7 +1291,7 @@ function normalizeApiRecord(record) {
   const counterpartyUid = pickField(record, UEEX_FIELD_COUNTERPARTY_UID, ["counterparty_uid", "counterparty_user_id", "opposite_uid", "opposite_user_id", "other_uid", "other_user_id", "peer_uid", "peer_user_id", "target_uid", "target_user_id", "to_uid", "to_user_id"]);
   const txid = pickField(record, "", ["txid", "tx_id", "hash", "transaction_hash"]);
 
-  const fallbackExchangeId = md5Upper([
+  const fallbackExchangeId = md5Sign([
     remark,
     fromUid,
     toUid,
