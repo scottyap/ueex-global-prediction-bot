@@ -36,6 +36,8 @@ const UEEX_API_TOKEN = process.env.UEEX_API_TOKEN || "";
 const UEEX_API_DEPOSIT_LIST_PATH = process.env.UEEX_API_DEPOSIT_LIST_PATH || "/Assets/depositWithdrawList";
 const UEEX_SIGN_MODE = process.env.UEEX_SIGN_MODE || "query_secret_suffix";
 const UEEX_SIGN_SECRET_PARAM = process.env.UEEX_SIGN_SECRET_PARAM || "key";
+// ThirdApi usually expects a 10-digit seconds timestamp. Set UEEX_TIMESTAMP_UNIT=milliseconds only if technical support confirms 13 digits are required.
+const UEEX_TIMESTAMP_UNIT = (process.env.UEEX_TIMESTAMP_UNIT || "seconds").toLowerCase();
 const UEEX_RECORD_LIMIT = Number(process.env.UEEX_RECORD_LIMIT || 200);
 const UEEX_RECORD_MAX_PAGES = Number(process.env.UEEX_RECORD_MAX_PAGES || 3);
 const UEEX_RAW_DEBUG_DAYS = Number(process.env.UEEX_RAW_DEBUG_DAYS || 14);
@@ -1182,9 +1184,17 @@ function createUeexSignDebug(params) {
   };
 }
 
+function getUeexTimestamp() {
+  if (UEEX_TIMESTAMP_UNIT === "milliseconds" || UEEX_TIMESTAMP_UNIT === "millisecond" || UEEX_TIMESTAMP_UNIT === "ms") {
+    return String(Date.now());
+  }
+
+  return String(Math.floor(Date.now() / 1000));
+}
+
 function buildUeexApiParams(extraParams = {}) {
   const nonce = crypto.randomBytes(8).toString("hex");
-  const timestamp = String(Date.now());
+  const timestamp = getUeexTimestamp();
 
   const params = getNonEmptyParams({
     api_key: UEEX_API_KEY,
@@ -1648,7 +1658,7 @@ async function payCheckSignDebugCommand(ctx) {
     };
 
     const nonce = crypto.randomBytes(8).toString("hex");
-    const timestamp = String(Date.now());
+    const timestamp = getUeexTimestamp();
     const baseParams = getNonEmptyParams({
       api_key: UEEX_API_KEY,
       nonce,
@@ -1722,6 +1732,7 @@ async function payCheckSignDebugCommand(ctx) {
       `Secret param: ${UEEX_SIGN_SECRET_PARAM}`,
       `Timestamp: ${timestamp}`,
       `Timestamp length: ${timestamp.length}`,
+      `Timestamp unit: ${UEEX_TIMESTAMP_UNIT}`,
       `Nonce: ${nonce}`,
       `API key: ${maskSensitiveValue(UEEX_API_KEY)}`,
       `Token configured: ${UEEX_API_TOKEN ? "yes" : "no"}`,
