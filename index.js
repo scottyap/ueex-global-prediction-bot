@@ -85,6 +85,9 @@ const LOSER_IMAGE_URL =
 const MATCH_SETTLED_IMAGE_URL =
   process.env.MATCH_SETTLED_IMAGE_URL ||
   "https://i.ibb.co/fzfJTNWb/Chat-GPT-Image-Jun-5-2026-06-08-57-PM.png";
+const ORDER_CANCELLED_IMAGE_URL =
+  process.env.ORDER_CANCELLED_IMAGE_URL ||
+  "https://i.ibb.co/zV2pxQNm/Chat-GPT-Image-Jun-8-2026-01-26-00-PM.png";
 const TELEGRAM_CAPTION_SAFE_LIMIT = 900;
 const ADMIN_GROUP_CHAT_ID = process.env.ADMIN_GROUP_CHAT_ID || "";
 const PUBLIC_GROUP_CHAT_ID = process.env.PUBLIC_GROUP_CHAT_ID || process.env.PUBLIC_CHAT_ID || "";
@@ -111,6 +114,7 @@ app.use(express.json());
 
 const sessionStore = new Map();
 const privateMenuMessageStore = new Map();
+const acceptedRulesStore = new Set();
 
 function getSessionKey(ctx) {
   return `${ctx.chat?.id || "unknown"}:${ctx.from?.id || "unknown"}`;
@@ -838,6 +842,47 @@ function getPrivateMatchesInlineKeyboard() {
   return Markup.inlineKeyboard([
     [Markup.button.callback("⚽ Matches", "wcgoto:matches")]
   ]);
+}
+
+function getRulesAcceptKeyboard() {
+  return Markup.inlineKeyboard([
+    [Markup.button.callback("✅ I Understand", "wcrules:accept")]
+  ]);
+}
+
+function getOrderCancelledKeyboard() {
+  return Markup.inlineKeyboard([
+    [Markup.button.url("🛟 Support", "https://t.me/UEEx_JJ")],
+    [Markup.button.callback("⚽ Matches", "wcgoto:matches")]
+  ]);
+}
+
+function hasAcceptedRules(ctx) {
+  return Boolean(ctx?.from?.id) && acceptedRulesStore.has(String(ctx.from.id));
+}
+
+function markRulesAccepted(ctx) {
+  if (ctx?.from?.id) {
+    acceptedRulesStore.add(String(ctx.from.id));
+  }
+}
+
+async function showStartRules(ctx, pendingMatchCode = "") {
+  if (!isPrivateChat(ctx)) {
+    return ctx.reply("Please open private chat with the bot to join World Cup Prediction.");
+  }
+
+  clearSession(ctx);
+
+  if (pendingMatchCode) {
+    setSession(ctx, { step: "rules_pending_match", pendingMatchCode });
+  }
+
+  const rulesText = `${buildRulesMessage()}
+
+Please read the rules and tap “I Understand” to continue.`;
+
+  return replyWithOptionalPhoto(ctx, RULES_IMAGE_URL, rulesText, getRulesAcceptKeyboard());
 }
 
 function getPendingOrderKeyboard(orderCode) {
@@ -2173,6 +2218,10 @@ async function showWorldCupEntry(ctx) {
 
 async function showOpenMatches(ctx) {
   if (isPrivateChat(ctx)) {
+    if (!hasAcceptedRules(ctx)) {
+      return showStartRules(ctx);
+    }
+
     return showMatchDateSelection(ctx);
   }
 
@@ -2533,7 +2582,13 @@ async function cancelPendingOrder(ctx, orderCode) {
 🔸 Selection: ${match ? formatSelectionWithFlags(match, order.selection) : order.selection}
 🔸 Amount: ${formatAmount(order.expected_amount)} ${order.currency}`);
 
-  return editCallbackMessage(ctx, message);
+  try {
+    await ctx.deleteMessage();
+  } catch (error) {
+    // Ignore delete failures.
+  }
+
+  return replyWithOptionalPhoto(ctx, ORDER_CANCELLED_IMAGE_URL, message, getOrderCancelledKeyboard());
 }
 
 async function confirmOrderByCode(ctx, orderCode, amount, options = {}) {
@@ -2766,7 +2821,7 @@ This pending order has been cancelled by admin. It will not be counted.`;
 
   let userNotified = true;
   try {
-    await sendOptionalPhoto(order.telegram_id, "", userCancelText, getPrivateMatchesInlineKeyboard());
+    await sendOptionalPhoto(order.telegram_id, ORDER_CANCELLED_IMAGE_URL, userCancelText, getOrderCancelledKeyboard());
   } catch (error) {
     userNotified = false;
     console.error("Failed to notify user after admin void:", error.message);
@@ -3696,12 +3751,20 @@ bot.start(async (ctx) => {
 
   if (payload.startsWith("bet_")) {
     const matchCode = payload.replace(/^bet_/i, "").toUpperCase();
+
+    if (!hasAcceptedRules(ctx)) {
+      return showStartRules(ctx, matchCode);
+    }
+
     return startPrivateBet(ctx, matchCode);
   }
 
   if (isPrivateChat(ctx)) {
-    clearSession(ctx);
-    return replyWithOptionalPhoto(ctx, WELCOME_IMAGE_URL, buildWelcomeMessage(), getPrivateMainMenu());
+    if (!hasAcceptedRules(ctx)) {
+      return showStartRules(ctx);
+    }
+
+    return showMatchDateSelection(ctx, false);
   }
 
   return ctx.reply("Please open private chat with the bot to join World Cup Prediction.");
@@ -3766,9 +3829,39 @@ bot.on("callback_query", async (ctx) => {
   try {
     const data = ctx.callbackQuery?.data || "";
 
+    if (data === "wcrules:accept") {
+      if (!isPrivateChat(ctx)) {
+        return ctx.answerCbQuery("Please use private chat with the bot.", { show_alert: true });
+      }
+
+      markRulesAccepted(ctx);
+      await ctx.answerCbQuery("Rules accepted.");
+
+      const session = getSession(ctx);
+      const pendingMatchCode = session?.pendingMatchCode || "";
+      clearSession(ctx);
+
+      try {
+        await ctx.deleteMessage();
+      } catch (error) {
+        // Ignore delete failures.
+      }
+
+      if (pendingMatchCode) {
+        return startPrivateBet(ctx, pendingMatchCode);
+      }
+
+      return showMatchDateSelection(ctx, false);
+    }
+
     if (data === "wcdates") {
       if (!isPrivateChat(ctx)) {
         return ctx.answerCbQuery("Please use private chat with the bot.", { show_alert: true });
+      }
+
+      if (!hasAcceptedRules(ctx)) {
+        await ctx.answerCbQuery();
+        return showStartRules(ctx);
       }
 
       await ctx.answerCbQuery();
@@ -3778,6 +3871,11 @@ bot.on("callback_query", async (ctx) => {
     if (data === "wcgoto:matches") {
       if (!isPrivateChat(ctx)) {
         return ctx.answerCbQuery("Please use private chat with the bot.", { show_alert: true });
+      }
+
+      if (!hasAcceptedRules(ctx)) {
+        await ctx.answerCbQuery();
+        return showStartRules(ctx);
       }
 
       await ctx.answerCbQuery();
@@ -3814,6 +3912,11 @@ bot.on("callback_query", async (ctx) => {
         return ctx.answerCbQuery("Please vote in private chat with the bot.", { show_alert: true });
       }
 
+      if (!hasAcceptedRules(ctx)) {
+        await ctx.answerCbQuery();
+        return showStartRules(ctx);
+      }
+
       const [, matchCode, outcome] = data.split(":");
       await ctx.answerCbQuery();
       return showOutcomeScores(ctx, matchCode, outcome, true);
@@ -3827,6 +3930,11 @@ bot.on("callback_query", async (ctx) => {
     if (data.startsWith("wcsel:")) {
       if (!isPrivateChat(ctx)) {
         return ctx.answerCbQuery("Please vote in private chat with the bot.", { show_alert: true });
+      }
+
+      if (!hasAcceptedRules(ctx)) {
+        await ctx.answerCbQuery();
+        return showStartRules(ctx);
       }
 
       const parts = data.split(":");
@@ -3995,21 +4103,41 @@ bot.on("message", async (ctx) => {
 
     if (isPrivateChat(ctx) && ["⚽ Matches", "Matches", "matches", "🎮 Game", "Game", "game"].includes(cleaned)) {
       clearSession(ctx);
+
+      if (!hasAcceptedRules(ctx)) {
+        return showStartRules(ctx);
+      }
+
       return showMatchDateSelection(ctx);
     }
 
     if (isPrivateChat(ctx) && ["📜 Rules", "Rules", "rules", "Rule", "rule"].includes(cleaned)) {
       clearSession(ctx);
+
+      if (!hasAcceptedRules(ctx)) {
+        return showStartRules(ctx);
+      }
+
       return showRules(ctx);
     }
 
     if (isPrivateChat(ctx) && ["🛟 Support", "Support", "support", "Help", "help"].includes(cleaned)) {
       clearSession(ctx);
+
+      if (!hasAcceptedRules(ctx)) {
+        return showStartRules(ctx);
+      }
+
       return showSupport(ctx);
     }
 
     if (isPrivateChat(ctx) && ["📊 My Vote", "My Vote", "my vote", "My Votes", "my votes"].includes(cleaned)) {
       clearSession(ctx);
+
+      if (!hasAcceptedRules(ctx)) {
+        return showStartRules(ctx);
+      }
+
       return showMyVote(ctx);
     }
 
