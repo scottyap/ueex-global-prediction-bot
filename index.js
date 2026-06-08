@@ -36,6 +36,7 @@ const UEEX_API_TOKEN = process.env.UEEX_API_TOKEN || "";
 const UEEX_API_DEPOSIT_LIST_PATH = process.env.UEEX_API_DEPOSIT_LIST_PATH || "/Assets/depositWithdrawList";
 const UEEX_SIGN_MODE = process.env.UEEX_SIGN_MODE || "query_secret_suffix";
 const UEEX_SIGN_SECRET_PARAM = process.env.UEEX_SIGN_SECRET_PARAM || "key";
+const UEEX_SIGN_CASE = (process.env.UEEX_SIGN_CASE || "upper").toLowerCase();
 // ThirdApi usually expects a 10-digit seconds timestamp. Set UEEX_TIMESTAMP_UNIT=milliseconds only if technical support confirms 13 digits are required.
 const UEEX_TIMESTAMP_UNIT = (process.env.UEEX_TIMESTAMP_UNIT || "seconds").toLowerCase();
 // ThirdApi nonce is documented as int. Default to numeric nonce to avoid -142 random number errors.
@@ -1106,8 +1107,9 @@ async function updateLiveMatchMessage(matchCode) {
 }
 
 
-function md5Upper(input) {
-  return crypto.createHash("md5").update(String(input)).digest("hex").toUpperCase();
+function md5Sign(input) {
+  const digest = crypto.createHash("md5").update(String(input)).digest("hex");
+  return UEEX_SIGN_CASE === "lower" ? digest.toLowerCase() : digest.toUpperCase();
 }
 
 function getNonEmptyParams(params) {
@@ -1124,9 +1126,13 @@ function createUeexSign(params) {
 
   let raw;
 
-  if (UEEX_SIGN_MODE === "concat_secret_suffix") {
+  if (UEEX_SIGN_MODE === "concat_secret_suffix" || UEEX_SIGN_MODE === "query_direct_secret_suffix") {
+    // UEEx doc style: sorted query string, then append api_secret value directly.
+    // Example: api_key=xxx&nonce=123456&timestamp=1234567890<SECRET>
+    raw = `${entries.map(([key, value]) => `${key}=${value}`).join("&")}${UEEX_API_SECRET}`;
+  } else if (UEEX_SIGN_MODE === "plain_concat_secret_suffix") {
     raw = `${entries.map(([key, value]) => `${key}${value}`).join("")}${UEEX_API_SECRET}`;
-  } else if (UEEX_SIGN_MODE === "concat_secret_prefix") {
+  } else if (UEEX_SIGN_MODE === "plain_concat_secret_prefix") {
     raw = `${UEEX_API_SECRET}${entries.map(([key, value]) => `${key}${value}`).join("")}`;
   } else if (UEEX_SIGN_MODE === "query_secret_prefix") {
     raw = `${UEEX_SIGN_SECRET_PARAM}=${UEEX_API_SECRET}&${entries.map(([key, value]) => `${key}=${value}`).join("&")}`;
@@ -1134,7 +1140,7 @@ function createUeexSign(params) {
     raw = `${entries.map(([key, value]) => `${key}=${value}`).join("&")}&${UEEX_SIGN_SECRET_PARAM}=${UEEX_API_SECRET}`;
   }
 
-  return md5Upper(raw);
+  return md5Sign(raw);
 }
 
 
@@ -1155,11 +1161,15 @@ function buildSignRawFromEntries(entries, secretValue, maskSensitive = false) {
     return String(value);
   };
 
-  if (UEEX_SIGN_MODE === "concat_secret_suffix") {
+  if (UEEX_SIGN_MODE === "concat_secret_suffix" || UEEX_SIGN_MODE === "query_direct_secret_suffix") {
+    return `${entries.map(([key, value]) => `${key}=${formatValue(key, value)}`).join("&")}${secret}`;
+  }
+
+  if (UEEX_SIGN_MODE === "plain_concat_secret_suffix") {
     return `${entries.map(([key, value]) => `${key}${formatValue(key, value)}`).join("")}${secret}`;
   }
 
-  if (UEEX_SIGN_MODE === "concat_secret_prefix") {
+  if (UEEX_SIGN_MODE === "plain_concat_secret_prefix") {
     return `${secret}${entries.map(([key, value]) => `${key}${formatValue(key, value)}`).join("")}`;
   }
 
@@ -1178,7 +1188,7 @@ function createUeexSignDebug(params) {
 
   const raw = buildSignRawFromEntries(entries, UEEX_API_SECRET, false);
   const rawMasked = buildSignRawFromEntries(entries, UEEX_API_SECRET, true);
-  const sign = md5Upper(raw);
+  const sign = md5Sign(raw);
 
   return {
     entries,
@@ -1748,6 +1758,7 @@ async function payCheckSignDebugCommand(ctx) {
       `Receiver UID: ${UEEX_RECEIVER_UID}`,
       "",
       `Sign mode: ${UEEX_SIGN_MODE}`,
+      `Sign case: ${UEEX_SIGN_CASE}`,
       `Secret param: ${UEEX_SIGN_SECRET_PARAM}`,
       `Timestamp: ${timestamp}`,
       `Timestamp length: ${timestamp.length}`,
