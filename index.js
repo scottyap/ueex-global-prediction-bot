@@ -450,6 +450,55 @@ function formatTimeLeft(endAt) {
   return days > 0 ? `${days}d ${time}` : time;
 }
 
+function parseUtcOffsetMinutes(timezoneText) {
+  const match = String(timezoneText || "").trim().toUpperCase().match(/^UTC([+-])(\d{1,2})$/);
+
+  if (!match) return null;
+
+  const sign = match[1] === "+" ? 1 : -1;
+  const hours = Number(match[2]);
+
+  if (Number.isNaN(hours) || hours > 14) return null;
+
+  return sign * hours * 60;
+}
+
+function parseMatchStartAtUtc(matchDate, matchTime, matchTimezone) {
+  const dateParts = String(matchDate || "").split(".").map((value) => Number(value));
+  const timeParts = String(matchTime || "").split(":").map((value) => Number(value));
+  const offsetMinutes = parseUtcOffsetMinutes(matchTimezone);
+
+  if (
+    dateParts.length !== 3 ||
+    timeParts.length !== 2 ||
+    offsetMinutes === null ||
+    dateParts.some((value) => Number.isNaN(value)) ||
+    timeParts.some((value) => Number.isNaN(value))
+  ) {
+    return null;
+  }
+
+  const [year, month, day] = dateParts;
+  const [hour, minute] = timeParts;
+
+  if (
+    year < 2020 ||
+    month < 1 ||
+    month > 12 ||
+    day < 1 ||
+    day > 31 ||
+    hour < 0 ||
+    hour > 23 ||
+    minute < 0 ||
+    minute > 59
+  ) {
+    return null;
+  }
+
+  const localAsUtcMs = Date.UTC(year, month - 1, day, hour, minute, 0);
+  return new Date(localAsUtcMs - offsetMinutes * 60 * 1000);
+}
+
 function isBettingOpen(match) {
   return match.status === "open" && new Date(match.betting_end_at).getTime() > Date.now();
 }
@@ -2100,46 +2149,33 @@ async function createMatch(ctx, text) {
   }
 
   const cleaned = cleanCommandText(text);
-  const match = cleaned.match(/^\/worldcup_([A-Za-z0-9]+)_([A-Za-z0-9]+)_(\d+):(\d+):(\d+)_([0-9]+:[0-9]+)_([0-9]+:[0-9]+)_([A-Za-z0-9]+)_([0-9]{4}\.[0-9]{2}\.[0-9]{2})_([0-9]{1,2}:[0-9]{2})_(UTC[+-]\d{1,2})_([A-Za-z0-9-]+)$/i);
+  const match = cleaned.match(/^\/worldcup_([A-Za-z0-9]+)_([A-Za-z0-9]+)_([0-9]+:[0-9]+)_([0-9]+:[0-9]+)_([A-Za-z0-9]+)_([0-9]{4}\.[0-9]{2}\.[0-9]{2})_([0-9]{1,2}:[0-9]{2})_(UTC[+-]\d{1,2})_([A-Za-z0-9-]+)$/i);
 
   if (!match) {
     return ctx.reply(
-      "Invalid format.\nExample:\n/worldcup_MEX_ZAF_7:7:51_0:0_5:5_Others_2026.06.11_23:00_UTC+4_Group\n\nFormat:\n/worldcup_Team1_Team2_Days:Hours:Minutes_MinScore_MaxScore_Others_Date_Time_Timezone_Stage"
+      "Invalid format.\nExample:\n/worldcup_NED_JPN_0:0_5:5_Others_2026.06.15_00:00_UTC+4_Group-F\n\nFormat:\n/worldcup_Team1_Team2_MinScore_MaxScore_Others_Date_Time_Timezone_Stage\n\nBetting automatically closes 15 minutes before match time."
     );
   }
 
   const teamA = normalizeTeam(match[1]);
   const teamB = normalizeTeam(match[2]);
-  const days = Number(match[3]);
-  const hours = Number(match[4]);
-  const minutes = Number(match[5]);
-  const startScore = match[6] || "0:0";
-  const endScore = match[7] || "5:5";
-  const lastOption = match[8] || "Others";
-  const matchDate = match[9];
-  const matchTime = match[10];
-  const matchTimezone = match[11].toUpperCase();
-  const matchStage = match[12];
+  const startScore = match[3] || "0:0";
+  const endScore = match[4] || "5:5";
+  const lastOption = match[5] || "Others";
+  const matchDate = match[6];
+  const matchTime = match[7];
+  const matchTimezone = match[8].toUpperCase();
+  const matchStage = match[9];
   const selectionOptions = generateScoreOptions(startScore, endScore, lastOption);
 
   if (!teamA || !teamB || teamA === teamB) {
-    return ctx.reply("Invalid teams. Example: /worldcup_MEX_ZAF_7:7:51_0:0_5:5_Others_2026.06.11_23:00_UTC+4_Group");
+    return ctx.reply("Invalid teams. Example: /worldcup_NED_JPN_0:0_5:5_Others_2026.06.15_00:00_UTC+4_Group-F");
   }
 
-  if (
-    days < 0 ||
-    hours < 0 ||
-    hours > 23 ||
-    minutes < 0 ||
-    minutes > 59 ||
-    days * 1440 + hours * 60 + minutes <= 0
-  ) {
-    return ctx.reply("Invalid betting time. Use Days:Hours:Minutes, for example: 7:7:51");
-  }
+  const matchStartAt = parseMatchStartAtUtc(matchDate, matchTime, matchTimezone);
 
-  const timeParts = matchTime.split(":").map(Number);
-  if (timeParts.length !== 2 || timeParts[0] < 0 || timeParts[0] > 23 || timeParts[1] < 0 || timeParts[1] > 59) {
-    return ctx.reply("Invalid match time. Example: 23:00");
+  if (!matchStartAt || Number.isNaN(matchStartAt.getTime())) {
+    return ctx.reply("Invalid match date, time, or timezone. Example: 2026.06.15_00:00_UTC+4");
   }
 
   if (!selectionOptions || selectionOptions.length < 2) {
@@ -2148,7 +2184,11 @@ async function createMatch(ctx, text) {
 
   const matchCode = await generateUniqueCode("WC", "wc_matches", "match_code");
   const now = new Date();
-  const bettingEndAt = new Date(now.getTime() + (days * 1440 + hours * 60 + minutes) * 60 * 1000);
+  const bettingEndAt = new Date(matchStartAt.getTime() - 15 * 60 * 1000);
+
+  if (bettingEndAt.getTime() <= now.getTime()) {
+    return ctx.reply("Invalid match time. Betting closes 15 minutes before the match, so the betting close time must be in the future.");
+  }
 
   const payload = {
     match_code: matchCode,
@@ -2204,12 +2244,20 @@ async function createMatch(ctx, text) {
   await supabase
     .from("wc_matches")
     .update({
+      live_chat_id: Number(PUBLIC_GROUP_CHAT_ID),
       live_message_id: liveMessage.message_id,
       updated_at: new Date().toISOString()
     })
     .eq("match_code", data.match_code);
 
-  return ctx.reply(`✅ Match created and posted to the World Cup topic.\n\nMatch ID: ${data.match_code}\nMatch: ${formatTeamWithFlag(teamA)} vs ${formatTeamWithFlag(teamB)}\nMatch Time: ${matchDate} ${matchTime} ${matchTimezone}\nStage: ${matchStage}\nBetting closes in ${days}d ${hours}h ${minutes}m.`);
+  return ctx.reply(`✅ Match created and posted to the World Cup topic.
+
+Match ID: ${data.match_code}
+Match: ${formatTeamWithFlag(teamA)} vs ${formatTeamWithFlag(teamB)}
+Match Time: ${matchDate} ${matchTime} ${matchTimezone}
+Stage: ${matchStage}
+Betting closes: 15 minutes before match time
+Betting Time Left: ${formatTimeLeft(data.betting_end_at)}`);
 }
 
 async function showWorldCupEntry(ctx) {
@@ -3842,10 +3890,12 @@ bot.on("callback_query", async (ctx) => {
       clearSession(ctx);
 
       try {
-        await ctx.deleteMessage();
+        await ctx.editMessageReplyMarkup({ inline_keyboard: [] });
       } catch (error) {
-        // Ignore delete failures.
+        // Keep the rules message even if the inline keyboard cannot be edited.
       }
+
+      await ctx.reply("✅ Rules accepted. Use the menu below to continue.", getPrivateMainMenu());
 
       if (pendingMatchCode) {
         return startPrivateBet(ctx, pendingMatchCode);
