@@ -62,6 +62,7 @@ const UEEX_FIELD_COUNTERPARTY_UID = process.env.UEEX_FIELD_COUNTERPARTY_UID || "
 const UEEX_FIELD_EXCHANGE_ID = process.env.UEEX_FIELD_EXCHANGE_ID || "";
 const UEEX_FIELD_EXCHANGE_TYPE = process.env.UEEX_FIELD_EXCHANGE_TYPE || "";
 const WORLDCUP_IMAGE_URL = process.env.WORLDCUP_IMAGE_URL || "";
+const WORLDCUP_IMAGE_URL_ZH = process.env.WORLDCUP_IMAGE_URL_ZH || "https://i.ibb.co/PsLDwsDB/Chat-GPT-Image-Jun-8-2026-02-43-59-PM-2.png";
 const PENDING_ORDER_IMAGE_URL = process.env.PENDING_ORDER_IMAGE_URL || "";
 const ORDER_CONFIRMED_IMAGE_URL = process.env.ORDER_CONFIRMED_IMAGE_URL || "";
 const WELCOME_IMAGE_URL =
@@ -2458,7 +2459,7 @@ Please select a match day:`;
     return editCallbackMessage(ctx, text, keyboard);
   }
 
-  const sent = await replyWithOptionalPhoto(ctx, WORLDCUP_IMAGE_URL, text, keyboard);
+  const sent = await replyWithOptionalPhoto(ctx, getLocalizedImageUrl(ctx, WORLDCUP_IMAGE_URL, WORLDCUP_IMAGE_URL_ZH), text, keyboard);
   return rememberPrivateMenuMessage(ctx, sent, "matches");
 }
 
@@ -2487,7 +2488,7 @@ async function showMatchesForDate(ctx, dateKey, edit = false) {
     return editCallbackMessage(ctx, text, keyboard);
   }
 
-  return replyWithOptionalPhoto(ctx, WORLDCUP_IMAGE_URL, text, keyboard);
+  return replyWithOptionalPhoto(ctx, getLocalizedImageUrl(ctx, WORLDCUP_IMAGE_URL, WORLDCUP_IMAGE_URL_ZH), text, keyboard);
 }
 
 async function startPrivateBet(ctx, matchCode) {
@@ -2544,7 +2545,7 @@ async function showSelectedMatch(ctx, matchCode, edit = false) {
     return editCallbackMessage(ctx, message, keyboard);
   }
 
-  return replyWithOptionalPhoto(ctx, WORLDCUP_IMAGE_URL, message, keyboard);
+  return replyWithOptionalPhoto(ctx, getLocalizedImageUrl(ctx, WORLDCUP_IMAGE_URL, WORLDCUP_IMAGE_URL_ZH), message, keyboard);
 }
 
 async function showOutcomeScores(ctx, matchCode, outcome, edit = false) {
@@ -2562,7 +2563,7 @@ async function showOutcomeScores(ctx, matchCode, outcome, edit = false) {
     return editCallbackMessage(ctx, message, keyboard);
   }
 
-  return replyWithOptionalPhoto(ctx, WORLDCUP_IMAGE_URL, message, keyboard);
+  return replyWithOptionalPhoto(ctx, getLocalizedImageUrl(ctx, WORLDCUP_IMAGE_URL, WORLDCUP_IMAGE_URL_ZH), message, keyboard);
 }
 
 async function getSelectionPool(matchCode, selection) {
