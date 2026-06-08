@@ -88,6 +88,15 @@ const MATCH_SETTLED_IMAGE_URL =
 const ORDER_CANCELLED_IMAGE_URL =
   process.env.ORDER_CANCELLED_IMAGE_URL ||
   "https://i.ibb.co/zV2pxQNm/Chat-GPT-Image-Jun-8-2026-01-26-00-PM.png";
+const ORDER_CANCELLED_IMAGE_URL_ZH = process.env.ORDER_CANCELLED_IMAGE_URL_ZH || "https://i.ibb.co/Vpj2PBwP/Chat-GPT-Image-Jun-8-2026-02-43-59-PM-1.png";
+const PENDING_ORDER_IMAGE_URL_ZH = process.env.PENDING_ORDER_IMAGE_URL_ZH || "https://i.ibb.co/hxVVJJRt/Chat-GPT-Image-Jun-8-2026-02-43-59-PM-3.png";
+const ORDER_CONFIRMED_IMAGE_URL_ZH = process.env.ORDER_CONFIRMED_IMAGE_URL_ZH || "https://i.ibb.co/7xnyz5x1/Chat-GPT-Image-Jun-8-2026-02-43-59-PM-4.png";
+const LOSER_IMAGE_URL_ZH = process.env.LOSER_IMAGE_URL_ZH || "https://i.ibb.co/9Hf2VkrT/Chat-GPT-Image-Jun-8-2026-02-43-59-PM-5.png";
+const WINNER_IMAGE_URL_ZH = process.env.WINNER_IMAGE_URL_ZH || "https://i.ibb.co/4RLw4LrR/Chat-GPT-Image-Jun-8-2026-02-43-59-PM-6.png";
+const MATCH_SETTLED_IMAGE_URL_ZH = process.env.MATCH_SETTLED_IMAGE_URL_ZH || "https://i.ibb.co/VpJ27nxw/Chat-GPT-Image-Jun-8-2026-02-43-59-PM-7.png";
+const RULES_IMAGE_URL_ZH = process.env.RULES_IMAGE_URL_ZH || "https://i.ibb.co/qMjDRwgH/Chat-GPT-Image-Jun-8-2026-02-43-59-PM-8.png";
+const SUPPORT_IMAGE_URL_ZH = process.env.SUPPORT_IMAGE_URL_ZH || "https://i.ibb.co/spJjGyg8/Chat-GPT-Image-Jun-8-2026-02-43-59-PM-9.png";
+const MYVOTE_IMAGE_URL_ZH = process.env.MYVOTE_IMAGE_URL_ZH || "https://i.ibb.co/mrQJkKqy/Chat-GPT-Image-Jun-8-2026-02-43-59-PM-10.png";
 const TELEGRAM_CAPTION_SAFE_LIMIT = 900;
 const ADMIN_GROUP_CHAT_ID = process.env.ADMIN_GROUP_CHAT_ID || "";
 const PUBLIC_GROUP_CHAT_ID = process.env.PUBLIC_GROUP_CHAT_ID || process.env.PUBLIC_CHAT_ID || "";
@@ -115,6 +124,7 @@ app.use(express.json());
 const sessionStore = new Map();
 const privateMenuMessageStore = new Map();
 const acceptedRulesStore = new Set();
+const languageStore = new Map();
 
 function getSessionKey(ctx) {
   return `${ctx.chat?.id || "unknown"}:${ctx.from?.id || "unknown"}`;
@@ -867,18 +877,91 @@ function getBetNowUrl(matchCode) {
   return `https://t.me/${BOT_USERNAME}?start=bet_${matchCode}`;
 }
 
-function getPrivateMainMenu() {
+function getUserLang(ctxOrUserId = null) {
+  const userId =
+    typeof ctxOrUserId === "object"
+      ? ctxOrUserId?.from?.id
+      : ctxOrUserId;
+
+  if (!userId) return "en";
+
+  return languageStore.get(String(userId)) || "en";
+}
+
+function setUserLang(ctxOrUserId, lang) {
+  const userId =
+    typeof ctxOrUserId === "object"
+      ? ctxOrUserId?.from?.id
+      : ctxOrUserId;
+
+  const normalized = String(lang || "").toLowerCase().startsWith("zh") ? "zh" : "en";
+
+  if (userId) {
+    languageStore.set(String(userId), normalized);
+  }
+
+  return normalized;
+}
+
+function hasSelectedLanguage(ctx) {
+  return Boolean(ctx?.from?.id) && languageStore.has(String(ctx.from.id));
+}
+
+function isZh(ctxOrLang = null) {
+  const lang =
+    typeof ctxOrLang === "string"
+      ? ctxOrLang
+      : getUserLang(ctxOrLang);
+
+  return lang === "zh";
+}
+
+function getLocalizedImageUrl(ctxOrLang, englishUrl, zhUrl) {
+  return isZh(ctxOrLang) && zhUrl ? zhUrl : englishUrl;
+}
+
+function getPrivateMainMenu(ctxOrLang = null) {
+  const zh = isZh(ctxOrLang);
+
   return {
     reply_markup: {
-      keyboard: [
-        [{ text: "⚽ Matches" }, { text: "📊 My Vote" }],
-        [{ text: "📜 Rules" }, { text: "🛟 Support" }]
-      ],
+      keyboard: zh
+        ? [
+            [{ text: "⚽ 比赛" }, { text: "📊 我的投票" }],
+            [{ text: "📜 规则" }, { text: "🛟 客服" }]
+          ]
+        : [
+            [{ text: "⚽ Matches" }, { text: "📊 My Vote" }],
+            [{ text: "📜 Rules" }, { text: "🛟 Support" }]
+          ],
       resize_keyboard: true,
       one_time_keyboard: false,
       is_persistent: true
     }
   };
+}
+
+function getLanguageKeyboard() {
+  return Markup.inlineKeyboard([
+    [
+      Markup.button.callback("中文", "wclang:zh"),
+      Markup.button.callback("English", "wclang:en")
+    ]
+  ]);
+}
+
+async function showLanguageSelection(ctx, pendingMatchCode = "") {
+  if (!isPrivateChat(ctx)) {
+    return ctx.reply("Please open private chat with the bot to join World Cup Prediction.");
+  }
+
+  clearSession(ctx);
+
+  if (pendingMatchCode) {
+    setSession(ctx, { step: "language_pending_match", pendingMatchCode });
+  }
+
+  return ctx.reply("🌐 Please select your language\n请选择语言", getLanguageKeyboard());
 }
 
 function getSupportKeyboard() {
@@ -887,22 +970,22 @@ function getSupportKeyboard() {
   ]);
 }
 
-function getPrivateMatchesInlineKeyboard() {
+function getPrivateMatchesInlineKeyboard(ctxOrLang = null) {
   return Markup.inlineKeyboard([
-    [Markup.button.callback("⚽ Matches", "wcgoto:matches")]
+    [Markup.button.callback(isZh(ctxOrLang) ? "⚽ 比赛" : "⚽ Matches", "wcgoto:matches")]
   ]);
 }
 
-function getRulesAcceptKeyboard() {
+function getRulesAcceptKeyboard(ctxOrLang = null) {
   return Markup.inlineKeyboard([
-    [Markup.button.callback("✅ I Understand", "wcrules:accept")]
+    [Markup.button.callback(isZh(ctxOrLang) ? "✅ 我已了解" : "✅ I Understand", "wcrules:accept")]
   ]);
 }
 
-function getOrderCancelledKeyboard() {
+function getOrderCancelledKeyboard(ctxOrLang = null) {
   return Markup.inlineKeyboard([
-    [Markup.button.url("🛟 Support", "https://t.me/UEEx_JJ")],
-    [Markup.button.callback("⚽ Matches", "wcgoto:matches")]
+    [Markup.button.url(isZh(ctxOrLang) ? "🛟 客服" : "🛟 Support", "https://t.me/UEEx_JJ")],
+    [Markup.button.callback(isZh(ctxOrLang) ? "⚽ 比赛" : "⚽ Matches", "wcgoto:matches")]
   ]);
 }
 
@@ -927,26 +1010,37 @@ async function showStartRules(ctx, pendingMatchCode = "") {
     setSession(ctx, { step: "rules_pending_match", pendingMatchCode });
   }
 
-  const rulesText = `${buildRulesMessage()}
+  const rulesText = `${buildRulesMessage(ctx)}
 
-Please read the rules and tap “I Understand” to continue.`;
+${isZh(ctx) ? "请阅读规则，并点击“我已了解”继续。" : "Please read the rules and tap “I Understand” to continue."}`;
 
-  return replyWithOptionalPhoto(ctx, RULES_IMAGE_URL, rulesText, getRulesAcceptKeyboard());
+  return replyWithOptionalPhoto(ctx, getLocalizedImageUrl(ctx, RULES_IMAGE_URL, RULES_IMAGE_URL_ZH), rulesText, getRulesAcceptKeyboard(ctx));
 }
 
-function getPendingOrderKeyboard(orderCode) {
+function getPendingOrderKeyboard(orderCode, ctxOrLang = null) {
   return Markup.inlineKeyboard([
-    [Markup.button.callback("❌ Cancel", `wccancel:${orderCode}`)],
-    [Markup.button.callback("⚽ Matches", "wcgoto:matches")]
+    [Markup.button.callback(isZh(ctxOrLang) ? "❌ 取消订单" : "❌ Cancel", `wccancel:${orderCode}`)],
+    [Markup.button.callback(isZh(ctxOrLang) ? "⚽ 比赛" : "⚽ Matches", "wcgoto:matches")]
   ]);
 }
 
-function buildRulesMessage() {
+function buildRulesMessage(ctxOrLang = null) {
+  if (isZh(ctxOrLang)) {
+    return `1. 点击“比赛”，选择比赛日期、比赛、预测方向、准确比分和 UE 投票金额。
+2. 最低投票金额：${formatAmount(MIN_BET_AMOUNT)} UE。
+3. 创建待支付订单后，请将对应 UE 金额转账至 BSC 地址：${TRANSFER_ADDRESS}。
+4. 转账备注必须填写订单 ID。订单仅在付款确认后计入。
+5. 如果转账金额、备注或其他信息不正确，订单可能无法自动确认。
+6. 比赛结果录入后，猜中用户将按已确认投票金额比例瓜分净奖池。
+7. 平台手续费：${formatAmount(new Decimal(PLATFORM_FEE_BPS).div(100))}%。
+8. UEEx 保留对异常行为、无效付款及最终奖励资格进行审核的权利。`;
+  }
+
   return `1. Tap Matches and select a match day, match, prediction type, exact score, and UE voting amount.
 2. Minimum voting amount: ${formatAmount(MIN_BET_AMOUNT)} UE.
 3. After creating a pending order, transfer the exact UE amount to the BSC address ${TRANSFER_ADDRESS}.
 4. Use your Order ID as the transfer remark. Orders are counted only after payment confirmation.
-5. If your transfer amount, UID, or remark is incorrect, your vote may not be confirmed automatically.
+5. If your transfer amount, remark, or other information is incorrect, your vote may not be confirmed automatically.
 6. After the match result is recorded, winning users share the net pool according to their confirmed voting amount.
 7. Platform fee: ${formatAmount(new Decimal(PLATFORM_FEE_BPS).div(100))}%.
 8. UEEx reserves the right to review abnormal activity, invalid payments, and final reward eligibility.`;
@@ -957,7 +1051,7 @@ async function showRules(ctx) {
     await deleteLastPrivateMenuMessage(ctx, "rules");
   }
 
-  const sent = await replyWithOptionalPhoto(ctx, RULES_IMAGE_URL, buildRulesMessage(), getPrivateMainMenu());
+  const sent = await replyWithOptionalPhoto(ctx, getLocalizedImageUrl(ctx, RULES_IMAGE_URL, RULES_IMAGE_URL_ZH), buildRulesMessage(ctx), getPrivateMainMenu(ctx));
   return rememberPrivateMenuMessage(ctx, sent, "rules");
 }
 
@@ -969,9 +1063,9 @@ async function showSupport(ctx) {
 
   const sent = await replyWithOptionalPhoto(
     ctx,
-    SUPPORT_IMAGE_URL,
-    "🛟 Need help? Contact @UEEx_JJ for support.",
-    getPrivateMainMenu()
+    getLocalizedImageUrl(ctx, SUPPORT_IMAGE_URL, SUPPORT_IMAGE_URL_ZH),
+    isZh(ctx) ? "如需帮助，请联系 @UEEx_JJ。" : "🛟 Need help? Contact @UEEx_JJ for support.",
+    getPrivateMainMenu(ctx)
   );
   return rememberPrivateMenuMessage(ctx, sent, "support");
 }
@@ -2087,7 +2181,7 @@ async function autoVoidExpiredPendingOrders(matchInput) {
     try {
       await sendOptionalPhoto(
         order.telegram_id,
-        LOSER_IMAGE_URL,
+        getLocalizedImageUrl(order.telegram_id, LOSER_IMAGE_URL, LOSER_IMAGE_URL_ZH),
         `⚽️ Match: ${formatTeamWithFlag(match.team_a)} vs ${formatTeamWithFlag(match.team_b)}
 🔸 Match ID: ${match.match_code}
 🔸 Order ID: ${order.order_code}
@@ -2266,6 +2360,10 @@ async function showWorldCupEntry(ctx) {
 
 async function showOpenMatches(ctx) {
   if (isPrivateChat(ctx)) {
+    if (!hasSelectedLanguage(ctx)) {
+      return showLanguageSelection(ctx);
+    }
+
     if (!hasAcceptedRules(ctx)) {
       return showStartRules(ctx);
     }
@@ -2295,9 +2393,9 @@ async function showMatchDateSelection(ctx, edit = false) {
   const matches = sortMatchesBySchedule((await getAllOpenMatches()).filter(isBettingOpen));
 
   if (!matches.length) {
-    const message = "No open World Cup prediction matches are available now.";
+    const message = isZh(ctx) ? "当前暂无开放中的世界杯预测比赛。" : "No open World Cup prediction matches are available now.";
     if (edit) return editCallbackMessage(ctx, message, null);
-    const sent = await ctx.reply(message, getPrivateMainMenu());
+    const sent = await ctx.reply(message, getPrivateMainMenu(ctx));
     return rememberPrivateMenuMessage(ctx, sent, "matches");
   }
 
@@ -2312,13 +2410,17 @@ async function showMatchDateSelection(ctx, edit = false) {
     const count = matches.filter((item) => getMatchDateKey(item) === dateKey).length;
     rows.push([
       Markup.button.callback(
-        `${getMatchDayLabel(dateKey)} • ${count} match${count > 1 ? "es" : ""}`,
+        `${getMatchDayLabel(dateKey)} • ${count} ${isZh(ctx) ? "场比赛" : `match${count > 1 ? "es" : ""}`}`,
         `wcdate:${encodeDateKey(dateKey)}`
       )
     ]);
   }
 
-  const text = `🏆 Upcoming Matches
+  const text = isZh(ctx)
+    ? `🏆 即将开始的比赛
+
+请选择比赛日期：`
+    : `🏆 Upcoming Matches
 
 Please select a match day:`;
   const keyboard = Markup.inlineKeyboard(rows);
@@ -2338,15 +2440,16 @@ async function showMatchesForDate(ctx, dateKey, edit = false) {
   );
 
   if (!matches.length) {
-    const message = "No open matches are available for this date.";
-    if (edit) return editCallbackMessage(ctx, message, Markup.inlineKeyboard([[Markup.button.callback("Back", "wcdates")]]));
-    return ctx.reply(message, Markup.inlineKeyboard([[Markup.button.callback("Back", "wcdates")]]));
+    const message = isZh(ctx) ? "该日期暂无开放中的比赛。" : "No open matches are available for this date.";
+    const backKeyboard = Markup.inlineKeyboard([[Markup.button.callback(isZh(ctx) ? "返回" : "Back", "wcdates")]]);
+    if (edit) return editCallbackMessage(ctx, message, backKeyboard);
+    return ctx.reply(message, backKeyboard);
   }
 
   const rows = matches.map((match) => [
     Markup.button.callback(getMatchListButtonLabel(match), `wcmatch:${match.match_code}`)
   ]);
-  rows.push([Markup.button.callback("Back", "wcdates")]);
+  rows.push([Markup.button.callback(isZh(ctx) ? "返回" : "Back", "wcdates")]);
 
   const text = `${getMatchDayLabel(dateKey)}`;
   const keyboard = Markup.inlineKeyboard(rows);
@@ -2370,7 +2473,7 @@ async function startPrivateBet(ctx, matchCode) {
   }
 
   if (!isBettingOpen(match)) {
-    return ctx.reply("Betting for this match is already closed.");
+    return ctx.reply(isZh(ctx) ? "该比赛已停止下注。" : "Betting for this match is already closed.");
   }
 
   const user = await getUserByTelegramId(ctx.from.id);
@@ -2378,7 +2481,7 @@ async function startPrivateBet(ctx, matchCode) {
   if (!user) {
     await deleteStoredPrompt(ctx);
 
-    const prompt = await ctx.reply("Please enter your UEEx UID.", {
+    const prompt = await ctx.reply(isZh(ctx) ? "请输入你的 UEEx UID。" : "Please enter your UEEx UID.", {
       reply_markup: {
         force_reply: true,
         selective: true
@@ -2464,30 +2567,30 @@ async function handleAmountInput(ctx, text, session) {
   const amount = parsePositiveAmount(text);
 
   if (!amount) {
-    return ctx.reply("Invalid amount. Please enter a positive UE amount, for example: 1,000 or 1,150.5", getPrivateMainMenu());
+    return ctx.reply(isZh(ctx) ? "金额格式错误。请输入有效的 UE 金额，例如：1,000 或 1,150.5" : "Invalid amount. Please enter a positive UE amount, for example: 1,000 or 1,150.5", getPrivateMainMenu(ctx));
   }
 
   if (amount.lt(MIN_BET_AMOUNT)) {
-    return ctx.reply(`Minimum voting amount is ${formatAmount(MIN_BET_AMOUNT)} UE.`, getPrivateMainMenu());
+    return ctx.reply(isZh(ctx) ? `最低投票金额为 ${formatAmount(MIN_BET_AMOUNT)} UE。` : `Minimum voting amount is ${formatAmount(MIN_BET_AMOUNT)} UE.`, getPrivateMainMenu(ctx));
   }
 
   const match = await getMatch(session.matchCode);
 
   if (!match) {
     clearSession(ctx);
-    return ctx.reply("Match not found. Please start again with /worldcup.");
+    return ctx.reply(isZh(ctx) ? "未找到比赛，请重新开始。" : "Match not found. Please start again with /worldcup.");
   }
 
   if (!isBettingOpen(match)) {
     clearSession(ctx);
-    return ctx.reply("Betting for this match is already closed.");
+    return ctx.reply(isZh(ctx) ? "该比赛已停止下注。" : "Betting for this match is already closed.");
   }
 
   const userRecord = await getUserByTelegramId(ctx.from.id);
 
   if (!userRecord) {
     clearSession(ctx);
-    return ctx.reply("Please bind your UEEx UID first with /worldcup.");
+    return ctx.reply(isZh(ctx) ? "请先绑定你的 UEEx UID。" : "Please bind your UEEx UID first with /worldcup.");
   }
 
   const orderCode = await generateUniqueCode("O", "wc_orders", "order_code");
@@ -2523,8 +2626,22 @@ async function handleAmountInput(ctx, text, session) {
   await deleteStoredPrompt(ctx);
   clearSession(ctx);
 
-  const pendingMessageText = `⚽️ Match: ${formatTeamWithFlag(match.team_a)} vs ${formatTeamWithFlag(match.team_b)}
+  const pendingMessageText = isZh(ctx)
+    ? `⚽️ 比赛：${formatTeamWithFlag(match.team_a)} vs ${formatTeamWithFlag(match.team_b)}
 
+🔸 比赛 ID：${match.match_code}
+🔸 订单 ID：<code>${escapeHtml(data.order_code)}</code>
+🔸 UID：<code>${escapeHtml(data.ueex_uid)}</code>
+🔸 TG：${escapeHtml(getTelegramUserLabel(data))}
+🔸 选择：${escapeHtml(formatSelectionWithFlags(match, data.selection))}
+🔸 金额：${formatAmount(amount)} ${match.currency}
+
+❗️请转账 ${formatAmount(amount)} ${match.currency} 到以下 BSC 地址：\n<code>${escapeHtml(TRANSFER_ADDRESS)}</code>
+❗️转账备注：<code>${escapeHtml(data.order_code)}</code>
+❗️你的投票将在付款确认后计入。`
+    : `⚽️ Match: ${formatTeamWithFlag(match.team_a)} vs ${formatTeamWithFlag(match.team_b)}
+
+🔸 Match ID: ${match.match_code}
 🔸 Order ID: <code>${escapeHtml(data.order_code)}</code>
 🔸 UID: <code>${escapeHtml(data.ueex_uid)}</code>
 🔸 TG: ${escapeHtml(getTelegramUserLabel(data))}
@@ -2537,9 +2654,9 @@ async function handleAmountInput(ctx, text, session) {
 
   const pendingMessage = await replyWithOptionalPhoto(
     ctx,
-    PENDING_ORDER_IMAGE_URL,
+    getLocalizedImageUrl(ctx, PENDING_ORDER_IMAGE_URL, PENDING_ORDER_IMAGE_URL_ZH),
     pendingMessageText,
-    getPendingOrderKeyboard(data.order_code),
+    getPendingOrderKeyboard(data.order_code, ctx),
     { parse_mode: "HTML" }
   );
 
@@ -2636,7 +2753,7 @@ async function cancelPendingOrder(ctx, orderCode) {
     // Ignore delete failures.
   }
 
-  return replyWithOptionalPhoto(ctx, ORDER_CANCELLED_IMAGE_URL, message, getOrderCancelledKeyboard());
+  return replyWithOptionalPhoto(ctx, getLocalizedImageUrl(ctx, ORDER_CANCELLED_IMAGE_URL, ORDER_CANCELLED_IMAGE_URL_ZH), message, getOrderCancelledKeyboard(ctx));
 }
 
 async function confirmOrderByCode(ctx, orderCode, amount, options = {}) {
@@ -2725,7 +2842,7 @@ async function confirmOrderByCode(ctx, orderCode, amount, options = {}) {
   let userNotified = true;
 
   try {
-    await sendOptionalPhoto(order.telegram_id, ORDER_CONFIRMED_IMAGE_URL, confirmedMessageText, getPrivateMatchesInlineKeyboard());
+    await sendOptionalPhoto(order.telegram_id, getLocalizedImageUrl(order.telegram_id, ORDER_CONFIRMED_IMAGE_URL, ORDER_CONFIRMED_IMAGE_URL_ZH), confirmedMessageText, getPrivateMatchesInlineKeyboard(order.telegram_id));
   } catch (error) {
     userNotified = false;
     console.error("Failed to notify user after confirmation:", error.message);
@@ -2752,7 +2869,7 @@ async function confirmOrderByCode(ctx, orderCode, amount, options = {}) {
 🔸 Amount: ${formatAmount(amount)} ${matchData.currency}
 🔸 User: ${getTelegramUserLabel(order)}
 
-🎉Total Pool: ${formatAmount(getTotalPool(updatedTotals))} ${matchData.currency}`, ORDER_CONFIRMED_IMAGE_URL);
+🎉Total Pool: ${formatAmount(getTotalPool(updatedTotals))} ${matchData.currency}`, getLocalizedImageUrl(order.telegram_id, ORDER_CONFIRMED_IMAGE_URL, ORDER_CONFIRMED_IMAGE_URL_ZH));
 
   return ctx.reply(`✅ Order confirmed: ${orderCode}
 UID: ${order.ueex_uid}
@@ -2869,7 +2986,7 @@ This pending order has been cancelled by admin. It will not be counted.`;
 
   let userNotified = true;
   try {
-    await sendOptionalPhoto(order.telegram_id, ORDER_CANCELLED_IMAGE_URL, userCancelText, getOrderCancelledKeyboard());
+    await sendOptionalPhoto(order.telegram_id, getLocalizedImageUrl(order.telegram_id, ORDER_CANCELLED_IMAGE_URL, ORDER_CANCELLED_IMAGE_URL_ZH), userCancelText, getOrderCancelledKeyboard(order.telegram_id));
   } catch (error) {
     userNotified = false;
     console.error("Failed to notify user after admin void:", error.message);
@@ -3354,7 +3471,7 @@ async function notifySettlementUsers(matchData, orders, settlement) {
     const message = payout
       ? buildWinningUserSettlementMessage(matchData, order, payout)
       : buildLosingUserSettlementMessage(matchData, order, noWinnerMode);
-    const imageUrl = payout ? WINNER_IMAGE_URL : LOSER_IMAGE_URL;
+    const imageUrl = payout ? getLocalizedImageUrl(order.telegram_id, WINNER_IMAGE_URL, WINNER_IMAGE_URL_ZH) : getLocalizedImageUrl(order.telegram_id, LOSER_IMAGE_URL, LOSER_IMAGE_URL_ZH);
 
     try {
       await sendOptionalPhoto(order.telegram_id, imageUrl, message);
@@ -3506,7 +3623,7 @@ async function settleMatch(ctx, text) {
   const adminMessage = buildSettlementCompletedAdminMessage(matchData, settlement);
   const publicMessage = buildSettlementPublicMessage(matchData, settlement);
 
-  const publicNotifyResult = await notifyPublicWorldCupTopicLong(publicMessage, MATCH_SETTLED_IMAGE_URL);
+  const publicNotifyResult = await notifyPublicWorldCupTopicLong(publicMessage, MATCH_SETTLED_IMAGE_URL_ZH || MATCH_SETTLED_IMAGE_URL);
   const adminFinalMessage = `${adminMessage}
 
 Public Topic Notification: ${publicNotifyResult ? "sent" : "failed or not configured"}`;
@@ -3617,12 +3734,12 @@ async function showMyVote(ctx) {
     .limit(100);
 
   if (error) {
-    const sent = await ctx.reply(`Failed to load your votes: ${error.message}`, getPrivateMainMenu());
+    const sent = await ctx.reply(`${isZh(ctx) ? "加载投票记录失败" : "Failed to load your votes"}: ${error.message}`, getPrivateMainMenu(ctx));
     return rememberPrivateMenuMessage(ctx, sent, "myvote");
   }
 
   if (!orders || orders.length === 0) {
-    const sent = await replyWithOptionalPhoto(ctx, MYVOTE_IMAGE_URL, "You have no World Cup prediction orders yet.", getPrivateMainMenu());
+    const sent = await replyWithOptionalPhoto(ctx, getLocalizedImageUrl(ctx, MYVOTE_IMAGE_URL, MYVOTE_IMAGE_URL_ZH), isZh(ctx) ? "你还没有世界杯预测订单。" : "You have no World Cup prediction orders yet.", getPrivateMainMenu(ctx));
     return rememberPrivateMenuMessage(ctx, sent, "myvote");
   }
 
@@ -3634,7 +3751,7 @@ async function showMyVote(ctx) {
     .in("match_code", matchCodes);
 
   if (matchError) {
-    const sent = await ctx.reply(`Failed to load matches: ${matchError.message}`, getPrivateMainMenu());
+    const sent = await ctx.reply(`${isZh(ctx) ? "加载比赛信息失败" : "Failed to load matches"}: ${matchError.message}`, getPrivateMainMenu(ctx));
     return rememberPrivateMenuMessage(ctx, sent, "myvote");
   }
 
@@ -3688,8 +3805,8 @@ async function showMyVote(ctx) {
 
   const sentMessages = [];
 
-  if (MYVOTE_IMAGE_URL) {
-    const photo = await ctx.replyWithPhoto(MYVOTE_IMAGE_URL, getPrivateMainMenu());
+  if (getLocalizedImageUrl(ctx, MYVOTE_IMAGE_URL, MYVOTE_IMAGE_URL_ZH)) {
+    const photo = await ctx.replyWithPhoto(getLocalizedImageUrl(ctx, MYVOTE_IMAGE_URL, MYVOTE_IMAGE_URL_ZH), getPrivateMainMenu(ctx));
     sentMessages.push(photo);
   }
 
@@ -3800,6 +3917,10 @@ bot.start(async (ctx) => {
   if (payload.startsWith("bet_")) {
     const matchCode = payload.replace(/^bet_/i, "").toUpperCase();
 
+    if (!hasSelectedLanguage(ctx)) {
+      return showLanguageSelection(ctx, matchCode);
+    }
+
     if (!hasAcceptedRules(ctx)) {
       return showStartRules(ctx, matchCode);
     }
@@ -3808,6 +3929,10 @@ bot.start(async (ctx) => {
   }
 
   if (isPrivateChat(ctx)) {
+    if (!hasSelectedLanguage(ctx)) {
+      return showLanguageSelection(ctx);
+    }
+
     if (!hasAcceptedRules(ctx)) {
       return showStartRules(ctx);
     }
@@ -3877,6 +4002,30 @@ bot.on("callback_query", async (ctx) => {
   try {
     const data = ctx.callbackQuery?.data || "";
 
+    if (data.startsWith("wclang:")) {
+      if (!isPrivateChat(ctx)) {
+        return ctx.answerCbQuery("Please use private chat with the bot.", { show_alert: true });
+      }
+
+      const lang = data.split(":")[1] === "zh" ? "zh" : "en";
+      setUserLang(ctx, lang);
+      acceptedRulesStore.delete(String(ctx.from.id));
+
+      const session = getSession(ctx);
+      const pendingMatchCode = session?.pendingMatchCode || "";
+      clearSession(ctx);
+
+      await ctx.answerCbQuery(lang === "zh" ? "已选择中文" : "English selected");
+
+      try {
+        await ctx.deleteMessage();
+      } catch (error) {
+        // Ignore delete failures.
+      }
+
+      return showStartRules(ctx, pendingMatchCode);
+    }
+
     if (data === "wcrules:accept") {
       if (!isPrivateChat(ctx)) {
         return ctx.answerCbQuery("Please use private chat with the bot.", { show_alert: true });
@@ -3895,7 +4044,7 @@ bot.on("callback_query", async (ctx) => {
         // Keep the rules message even if the inline keyboard cannot be edited.
       }
 
-      await ctx.reply("✅ Rules accepted. Use the menu below to continue.", getPrivateMainMenu());
+      await ctx.reply(isZh(ctx) ? "✅ 规则已确认。请使用下方菜单继续。" : "✅ Rules accepted. Use the menu below to continue.", getPrivateMainMenu(ctx));
 
       if (pendingMatchCode) {
         return startPrivateBet(ctx, pendingMatchCode);
@@ -3907,6 +4056,11 @@ bot.on("callback_query", async (ctx) => {
     if (data === "wcdates") {
       if (!isPrivateChat(ctx)) {
         return ctx.answerCbQuery("Please use private chat with the bot.", { show_alert: true });
+      }
+
+      if (!hasSelectedLanguage(ctx)) {
+        await ctx.answerCbQuery();
+        return showLanguageSelection(ctx);
       }
 
       if (!hasAcceptedRules(ctx)) {
@@ -3921,6 +4075,11 @@ bot.on("callback_query", async (ctx) => {
     if (data === "wcgoto:matches") {
       if (!isPrivateChat(ctx)) {
         return ctx.answerCbQuery("Please use private chat with the bot.", { show_alert: true });
+      }
+
+      if (!hasSelectedLanguage(ctx)) {
+        await ctx.answerCbQuery();
+        return showLanguageSelection(ctx);
       }
 
       if (!hasAcceptedRules(ctx)) {
@@ -3962,6 +4121,11 @@ bot.on("callback_query", async (ctx) => {
         return ctx.answerCbQuery("Please vote in private chat with the bot.", { show_alert: true });
       }
 
+      if (!hasSelectedLanguage(ctx)) {
+        await ctx.answerCbQuery();
+        return showLanguageSelection(ctx);
+      }
+
       if (!hasAcceptedRules(ctx)) {
         await ctx.answerCbQuery();
         return showStartRules(ctx);
@@ -3980,6 +4144,11 @@ bot.on("callback_query", async (ctx) => {
     if (data.startsWith("wcsel:")) {
       if (!isPrivateChat(ctx)) {
         return ctx.answerCbQuery("Please vote in private chat with the bot.", { show_alert: true });
+      }
+
+      if (!hasSelectedLanguage(ctx)) {
+        await ctx.answerCbQuery();
+        return showLanguageSelection(ctx);
       }
 
       if (!hasAcceptedRules(ctx)) {
@@ -4007,7 +4176,7 @@ bot.on("callback_query", async (ctx) => {
         await ctx.answerCbQuery();
 
         const prompt = await ctx.reply(
-          `Please enter your UEEx UID first.`,
+          isZh(ctx) ? `请先输入你的 UEEx UID。` : `Please enter your UEEx UID first.`,
           {
             reply_markup: {
               force_reply: true,
@@ -4031,7 +4200,7 @@ bot.on("callback_query", async (ctx) => {
 
       const selectionPool = await getSelectionPool(matchCode, selection);
       const prompt = await ctx.reply(
-        buildAmountPrompt(match, selection, selectionPool),
+        buildAmountPrompt(match, selection, selectionPool, "", ctx),
         {
           reply_markup: {
             force_reply: true,
@@ -4151,8 +4320,16 @@ bot.on("message", async (ctx) => {
       return showPendingOrders(ctx, pendingMatch?.[1] || null);
     }
 
-    if (isPrivateChat(ctx) && ["⚽ Matches", "Matches", "matches", "🎮 Game", "Game", "game"].includes(cleaned)) {
+    if (isPrivateChat(ctx) && /^\/language$/i.test(cleaned)) {
+      return showLanguageSelection(ctx);
+    }
+
+    if (isPrivateChat(ctx) && ["⚽ Matches", "Matches", "matches", "🎮 Game", "Game", "game", "⚽ 比赛", "比赛"].includes(cleaned)) {
       clearSession(ctx);
+
+      if (!hasSelectedLanguage(ctx)) {
+        return showLanguageSelection(ctx);
+      }
 
       if (!hasAcceptedRules(ctx)) {
         return showStartRules(ctx);
@@ -4161,8 +4338,12 @@ bot.on("message", async (ctx) => {
       return showMatchDateSelection(ctx);
     }
 
-    if (isPrivateChat(ctx) && ["📜 Rules", "Rules", "rules", "Rule", "rule"].includes(cleaned)) {
+    if (isPrivateChat(ctx) && ["📜 Rules", "Rules", "rules", "Rule", "rule", "📜 规则", "规则"].includes(cleaned)) {
       clearSession(ctx);
+
+      if (!hasSelectedLanguage(ctx)) {
+        return showLanguageSelection(ctx);
+      }
 
       if (!hasAcceptedRules(ctx)) {
         return showStartRules(ctx);
@@ -4171,8 +4352,12 @@ bot.on("message", async (ctx) => {
       return showRules(ctx);
     }
 
-    if (isPrivateChat(ctx) && ["🛟 Support", "Support", "support", "Help", "help"].includes(cleaned)) {
+    if (isPrivateChat(ctx) && ["🛟 Support", "Support", "support", "Help", "help", "🛟 客服", "客服"].includes(cleaned)) {
       clearSession(ctx);
+
+      if (!hasSelectedLanguage(ctx)) {
+        return showLanguageSelection(ctx);
+      }
 
       if (!hasAcceptedRules(ctx)) {
         return showStartRules(ctx);
@@ -4181,8 +4366,12 @@ bot.on("message", async (ctx) => {
       return showSupport(ctx);
     }
 
-    if (isPrivateChat(ctx) && ["📊 My Vote", "My Vote", "my vote", "My Votes", "my votes"].includes(cleaned)) {
+    if (isPrivateChat(ctx) && ["📊 My Vote", "My Vote", "my vote", "My Votes", "my votes", "📊 我的投票", "我的投票"].includes(cleaned)) {
       clearSession(ctx);
+
+      if (!hasSelectedLanguage(ctx)) {
+        return showLanguageSelection(ctx);
+      }
 
       if (!hasAcceptedRules(ctx)) {
         return showStartRules(ctx);
@@ -4211,7 +4400,7 @@ bot.on("message", async (ctx) => {
 
         const selectionPool = await getSelectionPool(session.nextMatchCode, session.nextSelection);
         const prompt = await ctx.reply(
-          buildAmountPrompt(match, session.nextSelection, selectionPool, `✅ UID confirmed: ${uid}`),
+          buildAmountPrompt(match, session.nextSelection, selectionPool, isZh(ctx) ? `✅ UID 已确认：${uid}` : `✅ UID confirmed: ${uid}`, ctx),
           {
             reply_markup: {
               force_reply: true,
@@ -4233,12 +4422,12 @@ bot.on("message", async (ctx) => {
       if (session.nextMatchCode) {
         const nextMatchCode = session.nextMatchCode;
         clearSession(ctx);
-        await ctx.reply(`✅ UID confirmed: ${uid}`);
+        await ctx.reply(isZh(ctx) ? `✅ UID 已确认：${uid}` : `✅ UID confirmed: ${uid}`, getPrivateMainMenu(ctx));
         return showSelectedMatch(ctx, nextMatchCode);
       }
 
       clearSession(ctx);
-      await ctx.reply(`✅ UID confirmed: ${uid}`);
+      await ctx.reply(isZh(ctx) ? `✅ UID 已确认：${uid}` : `✅ UID confirmed: ${uid}`, getPrivateMainMenu(ctx));
       return showMatchDateSelection(ctx);
     }
 
