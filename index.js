@@ -16,6 +16,7 @@ const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 const UID_MIN = Number(process.env.UID_MIN || 1022220);
 const UID_MAX = Number(process.env.UID_MAX || 35000000);
 const RECEIVER_UID = process.env.RECEIVER_UID || "1234567";
+const TRANSFER_ADDRESS = process.env.TRANSFER_ADDRESS || process.env.UEEX_TRANSFER_ADDRESS || "0x54ff9bbc6fdd9579acf54dd59adcb0689c901035";
 const DEFAULT_CURRENCY = process.env.DEFAULT_CURRENCY || "UE";
 const PLATFORM_FEE_BPS = Number(process.env.PLATFORM_FEE_BPS || 500);
 const MAX_OPEN_MATCHES_SHOWN = Number(process.env.MAX_OPEN_MATCHES_SHOWN || 500);
@@ -833,10 +834,23 @@ function getSupportKeyboard() {
   ]);
 }
 
+function getPrivateMatchesInlineKeyboard() {
+  return Markup.inlineKeyboard([
+    [Markup.button.callback("⚽ Matches", "wcgoto:matches")]
+  ]);
+}
+
+function getPendingOrderKeyboard(orderCode) {
+  return Markup.inlineKeyboard([
+    [Markup.button.callback("❌ Cancel", `wccancel:${orderCode}`)],
+    [Markup.button.callback("⚽ Matches", "wcgoto:matches")]
+  ]);
+}
+
 function buildRulesMessage() {
   return `1. Tap Matches and select a match day, match, prediction type, exact score, and UE voting amount.
 2. Minimum voting amount: ${formatAmount(MIN_BET_AMOUNT)} UE.
-3. After creating a pending order, transfer the exact UE amount to UID ${UEEX_RECEIVER_UID}.
+3. After creating a pending order, transfer the exact UE amount to the BSC address ${TRANSFER_ADDRESS}.
 4. Use your Order ID as the transfer remark. Orders are counted only after payment confirmation.
 5. If your transfer amount, UID, or remark is incorrect, your vote may not be confirmed automatically.
 6. After the match result is recorded, winning users share the net pool according to their confirmed voting amount.
@@ -970,7 +984,7 @@ function buildPublicMatchMessage(match, totals) {
 📌 Rules:
 • Tap Vote Now to enter the bot and submit your prediction.
 • Minimum voting amount: ${formatAmount(MIN_BET_AMOUNT)} ${match.currency}.
-• Transfer the exact ${match.currency} amount to UID ${match.receiver_uid}.
+• Transfer the exact ${match.currency} amount to the BSC address ${TRANSFER_ADDRESS}.
 • Use your Order ID as the transfer remark.
 • Votes are counted only after payment confirmation.`;
 }
@@ -2353,11 +2367,11 @@ async function handleAmountInput(ctx, text, session) {
   const amount = parsePositiveAmount(text);
 
   if (!amount) {
-    return ctx.reply("Invalid amount. Please enter a positive UE amount, for example: 1,000 or 1,150.5");
+    return ctx.reply("Invalid amount. Please enter a positive UE amount, for example: 1,000 or 1,150.5", getPrivateMainMenu());
   }
 
   if (amount.lt(MIN_BET_AMOUNT)) {
-    return ctx.reply(`Minimum voting amount is ${formatAmount(MIN_BET_AMOUNT)} UE.`);
+    return ctx.reply(`Minimum voting amount is ${formatAmount(MIN_BET_AMOUNT)} UE.`, getPrivateMainMenu());
   }
 
   const match = await getMatch(session.matchCode);
@@ -2420,7 +2434,7 @@ async function handleAmountInput(ctx, text, session) {
 🔸 Selection: ${escapeHtml(formatSelectionWithFlags(match, data.selection))}
 🔸 Amount: ${formatAmount(amount)} ${match.currency}
 
-❗️Please transfer ${formatAmount(amount)} ${match.currency} via UEEx internal transfer to UID ${escapeHtml(match.receiver_uid)}.
+❗️Please transfer ${formatAmount(amount)} ${match.currency} to the BSC address below:\n<code>${escapeHtml(TRANSFER_ADDRESS)}</code>.
 ❗️Transfer Remark: <code>${escapeHtml(data.order_code)}</code>
 ❗️Your vote will be counted after payment confirmation.`;
 
@@ -2428,9 +2442,7 @@ async function handleAmountInput(ctx, text, session) {
     ctx,
     PENDING_ORDER_IMAGE_URL,
     pendingMessageText,
-    Markup.inlineKeyboard([
-      [Markup.button.callback("❌ Cancel", `wccancel:${data.order_code}`)]
-    ]),
+    getPendingOrderKeyboard(data.order_code),
     { parse_mode: "HTML" }
   );
 
@@ -2455,7 +2467,10 @@ async function handleAmountInput(ctx, text, session) {
 🔸 Remark: ${data.order_code}
 
 Confirm:
-/confirm_${data.order_code}_${formatAmountForCommand(amount)}`);
+/confirm_${data.order_code}_${formatAmountForCommand(amount)}
+
+Void:
+/void_${data.order_code}`);
 
   return pendingMessage;
 }
@@ -2607,7 +2622,7 @@ async function confirmOrderByCode(ctx, orderCode, amount, options = {}) {
   let userNotified = true;
 
   try {
-    await sendOptionalPhoto(order.telegram_id, ORDER_CONFIRMED_IMAGE_URL, confirmedMessageText);
+    await sendOptionalPhoto(order.telegram_id, ORDER_CONFIRMED_IMAGE_URL, confirmedMessageText, getPrivateMatchesInlineKeyboard());
   } catch (error) {
     userNotified = false;
     console.error("Failed to notify user after confirmation:", error.message);
@@ -2708,9 +2723,11 @@ async function voidOrder(ctx, text) {
     return ctx.reply("This order is already voided.");
   }
 
-  if (order.status === "settled") {
-    return ctx.reply("Settled orders cannot be voided.");
+  if (order.status !== "pending") {
+    return ctx.reply(`Only pending orders can be voided. Current status: ${order.status}`);
   }
+
+  const matchData = await getMatch(order.match_code);
 
   const { error } = await supabase
     .from("wc_orders")
@@ -2726,9 +2743,37 @@ async function voidOrder(ctx, text) {
     return ctx.reply(`Failed to void order: ${error.message}`);
   }
 
+  if (order.pending_chat_id && order.pending_message_id) {
+    try {
+      await bot.telegram.deleteMessage(order.pending_chat_id, order.pending_message_id);
+    } catch (error) {
+      // Ignore delete failures.
+    }
+  }
+
   await updateLiveMatchMessage(order.match_code);
 
-  return ctx.reply(`✅ Order voided: ${orderCode}`);
+  const userCancelText = `❌ Order Cancelled
+
+⚽️ Match: ${matchData ? `${formatTeamWithFlag(matchData.team_a)} vs ${formatTeamWithFlag(matchData.team_b)}` : order.match_code}
+
+🔸 Match ID: ${order.match_code}
+🔸 Order ID: ${order.order_code}
+🔸 Selection: ${matchData ? formatSelectionWithFlags(matchData, order.selection) : order.selection}
+🔸 Amount: ${formatAmount(order.expected_amount)} ${order.currency || DEFAULT_CURRENCY}
+
+This pending order has been cancelled by admin. It will not be counted.`;
+
+  let userNotified = true;
+  try {
+    await sendOptionalPhoto(order.telegram_id, "", userCancelText, getPrivateMatchesInlineKeyboard());
+  } catch (error) {
+    userNotified = false;
+    console.error("Failed to notify user after admin void:", error.message);
+  }
+
+  return ctx.reply(`✅ Order voided: ${orderCode}
+User notified: ${userNotified ? "yes" : "no"}`);
 }
 
 async function lockMatch(ctx, text) {
@@ -3730,6 +3775,15 @@ bot.on("callback_query", async (ctx) => {
       return showMatchDateSelection(ctx, true);
     }
 
+    if (data === "wcgoto:matches") {
+      if (!isPrivateChat(ctx)) {
+        return ctx.answerCbQuery("Please use private chat with the bot.", { show_alert: true });
+      }
+
+      await ctx.answerCbQuery();
+      return showMatchDateSelection(ctx, false);
+    }
+
     if (data.startsWith("wcdate:")) {
       if (!isPrivateChat(ctx)) {
         return ctx.answerCbQuery("Please use private chat with the bot.", { show_alert: true });
@@ -3873,7 +3927,7 @@ bot.on("message", async (ctx) => {
 
     if (/^\/void_/i.test(cleaned)) {
       if (!(await requireAdminControlChat(ctx))) return;
-      return ctx.reply("/void is disabled. Pending unpaid orders are automatically voided after betting time ends.");
+      return voidOrder(ctx, cleaned);
     }
 
     if (/^\/lock_/i.test(cleaned)) {
