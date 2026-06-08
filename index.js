@@ -63,7 +63,7 @@ const UEEX_FIELD_EXCHANGE_ID = process.env.UEEX_FIELD_EXCHANGE_ID || "";
 const UEEX_FIELD_EXCHANGE_TYPE = process.env.UEEX_FIELD_EXCHANGE_TYPE || "";
 const WORLDCUP_IMAGE_URL = process.env.WORLDCUP_IMAGE_URL || "";
 const WORLDCUP_IMAGE_URL_ZH = process.env.WORLDCUP_IMAGE_URL_ZH || "https://i.ibb.co/PsLDwsDB/Chat-GPT-Image-Jun-8-2026-02-43-59-PM-2.png";
-const PENDING_ORDER_IMAGE_URL = process.env.PENDING_ORDER_IMAGE_URL || "";
+const PENDING_ORDER_IMAGE_URL = process.env.PENDING_ORDER_IMAGE_URL || "https://ibb.co/sdzpYKj3";
 const ORDER_CONFIRMED_IMAGE_URL = process.env.ORDER_CONFIRMED_IMAGE_URL || "";
 const WELCOME_IMAGE_URL =
   process.env.WELCOME_IMAGE_URL ||
@@ -90,7 +90,7 @@ const ORDER_CANCELLED_IMAGE_URL =
   process.env.ORDER_CANCELLED_IMAGE_URL ||
   "https://i.ibb.co/zV2pxQNm/Chat-GPT-Image-Jun-8-2026-01-26-00-PM.png";
 const ORDER_CANCELLED_IMAGE_URL_ZH = process.env.ORDER_CANCELLED_IMAGE_URL_ZH || "https://i.ibb.co/Vpj2PBwP/Chat-GPT-Image-Jun-8-2026-02-43-59-PM-1.png";
-const PENDING_ORDER_IMAGE_URL_ZH = process.env.PENDING_ORDER_IMAGE_URL_ZH || "https://i.ibb.co/hxVVJJRt/Chat-GPT-Image-Jun-8-2026-02-43-59-PM-3.png";
+const PENDING_ORDER_IMAGE_URL_ZH = process.env.PENDING_ORDER_IMAGE_URL_ZH || "https://ibb.co/sk7DBck";
 const ORDER_CONFIRMED_IMAGE_URL_ZH = process.env.ORDER_CONFIRMED_IMAGE_URL_ZH || "https://i.ibb.co/7xnyz5x1/Chat-GPT-Image-Jun-8-2026-02-43-59-PM-4.png";
 const LOSER_IMAGE_URL_ZH = process.env.LOSER_IMAGE_URL_ZH || "https://i.ibb.co/9Hf2VkrT/Chat-GPT-Image-Jun-8-2026-02-43-59-PM-5.png";
 const WINNER_IMAGE_URL_ZH = process.env.WINNER_IMAGE_URL_ZH || "https://i.ibb.co/4RLw4LrR/Chat-GPT-Image-Jun-8-2026-02-43-59-PM-6.png";
