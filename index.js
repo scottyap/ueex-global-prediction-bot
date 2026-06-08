@@ -38,6 +38,9 @@ const UEEX_SIGN_MODE = process.env.UEEX_SIGN_MODE || "query_secret_suffix";
 const UEEX_SIGN_SECRET_PARAM = process.env.UEEX_SIGN_SECRET_PARAM || "key";
 // ThirdApi usually expects a 10-digit seconds timestamp. Set UEEX_TIMESTAMP_UNIT=milliseconds only if technical support confirms 13 digits are required.
 const UEEX_TIMESTAMP_UNIT = (process.env.UEEX_TIMESTAMP_UNIT || "seconds").toLowerCase();
+// ThirdApi nonce is documented as int. Default to numeric nonce to avoid -142 random number errors.
+const UEEX_NONCE_MODE = (process.env.UEEX_NONCE_MODE || "numeric").toLowerCase();
+const UEEX_NONCE_LENGTH = Number(process.env.UEEX_NONCE_LENGTH || 6);
 const UEEX_RECORD_LIMIT = Number(process.env.UEEX_RECORD_LIMIT || 200);
 const UEEX_RECORD_MAX_PAGES = Number(process.env.UEEX_RECORD_MAX_PAGES || 3);
 const UEEX_RAW_DEBUG_DAYS = Number(process.env.UEEX_RAW_DEBUG_DAYS || 14);
@@ -1192,8 +1195,24 @@ function getUeexTimestamp() {
   return String(Math.floor(Date.now() / 1000));
 }
 
+function getUeexNonce() {
+  if (UEEX_NONCE_MODE === "hex") {
+    return crypto.randomBytes(8).toString("hex");
+  }
+
+  const length = Math.min(Math.max(Number.isFinite(UEEX_NONCE_LENGTH) ? UEEX_NONCE_LENGTH : 6, 1), 12);
+
+  if (length === 1) {
+    return String(crypto.randomInt(0, 10));
+  }
+
+  const min = 10 ** (length - 1);
+  const max = 10 ** length;
+  return String(crypto.randomInt(min, max));
+}
+
 function buildUeexApiParams(extraParams = {}) {
-  const nonce = crypto.randomBytes(8).toString("hex");
+  const nonce = getUeexNonce();
   const timestamp = getUeexTimestamp();
 
   const params = getNonEmptyParams({
@@ -1657,7 +1676,7 @@ async function payCheckSignDebugCommand(ctx) {
       end_time: apiTimeSeconds(endAt)
     };
 
-    const nonce = crypto.randomBytes(8).toString("hex");
+    const nonce = getUeexNonce();
     const timestamp = getUeexTimestamp();
     const baseParams = getNonEmptyParams({
       api_key: UEEX_API_KEY,
@@ -1734,6 +1753,8 @@ async function payCheckSignDebugCommand(ctx) {
       `Timestamp length: ${timestamp.length}`,
       `Timestamp unit: ${UEEX_TIMESTAMP_UNIT}`,
       `Nonce: ${nonce}`,
+      `Nonce mode: ${UEEX_NONCE_MODE}`,
+      `Nonce length: ${nonce.length}`,
       `API key: ${maskSensitiveValue(UEEX_API_KEY)}`,
       `Token configured: ${UEEX_API_TOKEN ? "yes" : "no"}`,
       `Secret configured: ${UEEX_API_SECRET ? "yes" : "no"}`,
