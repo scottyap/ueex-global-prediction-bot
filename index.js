@@ -3982,6 +3982,134 @@ Confirm: /confirm_${order.order_code}_${formatAmountForCommand(order.expected_am
 ${lines.join("\n\n")}`);
 }
 
+
+function getStartPredictionUrl() {
+  if (!BOT_USERNAME) return null;
+  return `https://t.me/${BOT_USERNAME}?start=worldcup`;
+}
+
+function buildTopicRulesKeyboard() {
+  const url = getStartPredictionUrl();
+
+  if (!url) return undefined;
+
+  return Markup.inlineKeyboard([
+    [Markup.button.url("⚽ Start Prediction", url)]
+  ]);
+}
+
+function buildTopicRulesMessage() {
+  return `🏆 UEEx World Cup Prediction Event
+
+Welcome to the UEEx World Cup Prediction Topic!
+Join the event, predict match results, and compete for the prize pool with the community.
+
+How to Join
+
+1. Tap the “⚽ Start Prediction” button below.
+2. Start the bot and select your language.
+3. Read and accept the event rules.
+4. Choose a match.
+5. Select your prediction:
+   • Team A Win
+   • Draw
+   • Team B Win
+6. Select the exact score.
+7. Enter your UE amount.
+8. Transfer the exact amount shown by the bot.
+9. Use your Order ID as the transfer remark.
+10. Your prediction will only be counted after payment is confirmed.
+
+Important Payment Rule
+
+Please make sure your transfer remark is exactly the Order ID shown by the bot.
+
+Example:
+Order ID: O123456
+Transfer remark: O123456
+
+If the remark is missing or incorrect, the bot may not be able to confirm your order automatically. The order may require manual review and may not be counted before the match deadline.
+
+Event Rules
+
+1. All predictions must be submitted through the official UEEx World Cup Bot.
+2. Each prediction order is valid only after the payment is confirmed.
+3. Please transfer the exact UE amount shown by the bot. If the transferred amount is lower or higher than the order amount, the order may not be confirmed automatically.
+4. Betting for each match closes 15 minutes before the scheduled kick-off time.
+5. Payments completed after the betting deadline may not be counted for that match.
+6. The final result is based on the official match result after regular time, including stoppage time. Extra time and penalties are not counted unless UEEx announces otherwise.
+7. If the match is postponed, cancelled, abandoned, or has an abnormal result situation, UEEx reserves the right to void, postpone, or manually review the related prediction orders.
+8. The prize pool is shared among users who selected the correct exact score. Rewards are calculated based on each winner’s confirmed prediction amount and the final net prize pool.
+9. If there are no exact-score winners for a match, UEEx may manually review the pool and announce the final handling method.
+10. Orders with incorrect amount, missing remark, wrong remark, late payment, duplicate payment, or other abnormal payment issues may require manual review.
+11. Users are responsible for checking their own order status in the bot. You can use “My Vote” to view your prediction records.
+12. UEEx reserves the final right of interpretation for this event.
+
+Reminder
+
+Please always follow the amount, address, and Order ID shown by the bot.
+Do not send funds without creating an order first.
+Do not reuse an old Order ID for a new transfer.
+
+Good luck and enjoy the World Cup with UEEx! ⚽️`;
+}
+
+async function sendTopicRules(ctx, shouldPin = true) {
+  if (!(await requireAdmin(ctx))) return;
+
+  if (!PUBLIC_GROUP_CHAT_ID) {
+    return ctx.reply("PUBLIC_GROUP_CHAT_ID is not configured. Please add the official public group chat ID in Render Environment.");
+  }
+
+  if (!BOT_USERNAME) {
+    return ctx.reply("BOT_USERNAME is not configured. Please add the bot username in Render Environment.");
+  }
+
+  const topicOptions = PUBLIC_WORLD_CUP_TOPIC_ID
+    ? { message_thread_id: Number(PUBLIC_WORLD_CUP_TOPIC_ID) }
+    : {};
+
+  const keyboard = buildTopicRulesKeyboard();
+  const text = buildTopicRulesMessage();
+
+  let sentMessage;
+  try {
+    sentMessage = await bot.telegram.sendMessage(
+      PUBLIC_GROUP_CHAT_ID,
+      text,
+      {
+        ...topicOptions,
+        ...(keyboard?.reply_markup ? { reply_markup: keyboard.reply_markup } : {})
+      }
+    );
+  } catch (error) {
+    console.error("Send topic rules error:", error);
+    return ctx.reply(`Failed to send topic rules: ${error.message}`);
+  }
+
+  let pinStatus = "not requested";
+
+  if (shouldPin) {
+    try {
+      await bot.telegram.pinChatMessage(PUBLIC_GROUP_CHAT_ID, sentMessage.message_id, {
+        disable_notification: true
+      });
+      pinStatus = "pinned";
+    } catch (error) {
+      pinStatus = `pin failed: ${error.message}. Please pin the message manually in the World Cup topic.`;
+      console.error("Pin topic rules error:", error.message);
+    }
+  }
+
+  return ctx.reply(`✅ Topic rules sent.
+
+Public group: ${PUBLIC_GROUP_CHAT_ID}
+Topic ID: ${PUBLIC_WORLD_CUP_TOPIC_ID || "main chat"}
+Message ID: ${sentMessage.message_id}
+Pin status: ${pinStatus}`);
+}
+
+
 async function showAdminHelp(ctx) {
   const text = `⚽ UEEx World Cup Bot Commands
 
@@ -4007,7 +4135,8 @@ Admin:
 /settle_WC0001 - Publish settlement
 /pending - View latest pending orders in admin group/private
 /pending_WC0001 - View pending orders for a match
-/chatid - Check chat ID
+/send_topic_rules - Send official pinned activity rules to World Cup topic with Start Prediction button
+/chatid - Check chat ID and topic ID
 /ping - Test bot`;
 
   return ctx.reply(text);
@@ -4062,8 +4191,18 @@ bot.command("help", async (ctx) => {
   await showAdminHelp(ctx);
 });
 
+bot.command("send_topic_rules", async (ctx) => {
+  try {
+    await sendTopicRules(ctx, true);
+  } catch (error) {
+    console.error("Send topic rules command error:", error);
+    await ctx.reply(`Error: ${error.message}`);
+  }
+});
+
 bot.command("chatid", async (ctx) => {
-  await ctx.reply(`Chat ID: ${ctx.chat.id}`);
+  const topicId = ctx.message?.message_thread_id || ctx.update?.message?.message_thread_id || "";
+  await ctx.reply(`Chat ID: ${ctx.chat.id}${topicId ? `\nTopic ID: ${topicId}` : ""}`);
 });
 
 bot.command("worldcup", async (ctx) => {
