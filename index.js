@@ -1050,18 +1050,18 @@ function buildRulesMessage(ctxOrLang = null) {
 12. UEEx 保留对异常行为、无效付款、补账、退款及最终奖励资格进行审核的权利。`;
   }
 
-  return `1. Tap Matches, select a match, prediction, exact score, and UE voting amount.
+  return `1. Tap Matches and select a match day, match, prediction type, exact score, and UE voting amount.
 2. Minimum voting amount: ${formatAmount(MIN_BET_AMOUNT)} UE.
-3. After creating an order, transfer UE to: ${TRANSFER_ADDRESS}.
-4. Enter the exact Order ID as the transfer remark. Wrong or missing remarks may prevent confirmation.
-5. Underpaid orders require a top-up before confirmation.
-6. Overpaid orders count only the order amount. Extra funds will be reviewed by Admin.
-7. Voting closes 15 minutes before kick-off. Late payments may not count.
-8. Exact-score winners share the net prize pool by confirmed voting amount.
-9. Platform fee: ${feePercent}% per match pool.
-10. Rewards will be distributed by 1pm (UTC+4) the next day.
-11. If a match is postponed, cancelled, or abnormal, Admin may cancel it and publish the refund list.
-12. UEEx reserves the right to review abnormal payments, refunds, and reward eligibility.`;
+3. After creating a pending order, transfer the required UE amount to the BSC address ${TRANSFER_ADDRESS}.
+4. You must enter the exact Order ID shown by the bot as the transfer remark. Missing or incorrect remarks will prevent funds from being credited/confirmed automatically.
+5. If your transfer is lower than the order amount, you must top up the remaining amount before the order can be confirmed.
+6. If your transfer is higher than the order amount, only the order amount will be counted into the prize pool. The excess amount will be manually reviewed and handled by Admin.
+7. Voting closes 15 minutes before kick-off. Payments received after the deadline may not be counted for that match.
+8. After the match result is recorded, exact-score winners share the net prize pool according to their confirmed voting amount.
+9. Platform fee: ${feePercent}%, deducted from each match pool.
+10. Rewards from all match prize pools will be distributed by 1pm (UTC+4) on the following day.
+11. If a match is postponed, cancelled, abandoned, or has abnormal result handling, Admin will cancel the match and publish the participant/refund list. Final refunds are subject to Admin/Finance review.
+12. UEEx reserves the right to review abnormal activity, invalid payments, top-ups, refunds, and final reward eligibility.`;
 }
 
 async function showRules(ctx) {
@@ -1077,60 +1077,68 @@ function buildHowToPlayMessage(ctxOrLang = null) {
   const feePercent = formatAmount(new Decimal(PLATFORM_FEE_BPS).div(100));
 
   if (isZh(ctxOrLang)) {
-    return `📌 如何参与：
-1. 点击“比赛”，选择比赛日期和比赛，并选择预测方向
-2. 选择准确比分，然后输入参与金额
-3. 按 Bot 显示的金额转账至官方收款地址
-4. 转账备注必须准确填写订单 ID
-5. 付款确认后，该订单才会计入奖池
+    return `🎮 玩法说明
 
-❓ 如何瓜分奖池：
-• 每场比赛独立奖池
-• 平台从总奖池收取 ${feePercent}% 手续费
-• 扣除手续费后为净奖池
-• 猜中准确比分的用户，按照各自已确认投票金额占中奖池的比例瓜分净奖池
+如何参与：
+1. 点击“比赛”。
+2. 选择比赛日期和比赛。
+3. 选择胜平负方向。
+4. 选择准确比分。
+5. 输入参与金额。
+6. 按 Bot 显示的金额转账至官方收款地址。
+7. 转账备注必须准确填写订单 ID。
+8. 付款确认后，该订单才会计入奖池。
 
-📝 示例：
-• 总奖池：10,000 UE
-• 平台手续费：${feePercent}%
-• 净奖池：9,500 UE
+如何瓜分奖池：
+• 每场比赛独立奖池。
+• 平台从总奖池收取 ${feePercent}% 手续费。
+• 扣除手续费后为净奖池。
+• 猜中准确比分的用户，按照各自已确认投票金额占中奖池的比例瓜分净奖池。
 
-如果准确比分中奖池为 5,000 UE，你投入 1,000 UE，占中奖池 20%，则预计获得净奖池 20%
+示例：
+总奖池：10,000 UE
+平台手续费：${feePercent}%
+净奖池：9,500 UE
 
-⚠️ 重要提醒：
-• 必须填写正确订单备注
-• 少转需补足后才可确认
-• 多转只按订单金额计入奖池，超出部分由 Admin 人工处理
-• 奖池瓜分所得将在次日 1pm（UTC+4）前完成发放`;
+如果准确比分中奖池为 5,000 UE，你投入 1,000 UE，占中奖池 20%，则预计获得净奖池 20%。
+
+重要提醒：
+• 必须填写正确订单备注。
+• 少转需补足后才可确认。
+• 多转只按订单金额计入奖池，超出部分由 Admin 人工处理。
+• 奖池瓜分所得将在次日 1pm（UTC+4）前完成发放。`;
   }
 
-  return `📌 How to join:
+  return `🎮 How to Play
 
-1. Tap Matches and select a match, prediction, exact score, and UE amount.
-2. Transfer the amount shown by the bot to the official address.
-3. Enter the exact Order ID as the transfer remark.
-4. Your order counts only after payment confirmation.
+How to join:
+1. Tap Matches.
+2. Select a match day and match.
+3. Select Win / Draw / Win.
+4. Select the exact score.
+5. Enter your UE amount.
+6. Transfer the amount shown by the bot to the official receiving address.
+7. Enter the exact Order ID as the transfer remark.
+8. Your order is counted into the pool only after payment confirmation.
 
-❓ Prize pool sharing:
+How the prize pool is shared:
+• Each match has an independent prize pool.
+• UEEx charges a ${feePercent}% platform fee from the total pool.
+• The remaining amount is the net prize pool.
+• Exact-score winners share the net prize pool proportionally based on their confirmed voting amount.
 
-• Each match has its own prize pool.
-• UEEx charges a ${feePercent}% platform fee.
-• Exact-score winners share the net prize pool by confirmed voting amount.
+Example:
+Total pool: 10,000 UE
+Platform fee: ${feePercent}%
+Net pool: 9,500 UE
 
-📝 Example:
+If the exact-score winning pool is 5,000 UE and your confirmed vote is 1,000 UE, you own 20% of the winning pool and receive around 20% of the net pool.
 
-• Total pool: 10,000 UE
-• Platform fee: ${feePercent}%
-• Net pool: 9,500 UE
-
-If the winning-score pool is 5,000 UE and your confirmed vote is 1,000 UE, you receive about 20% of the net prize pool.
-
-⚠️ Important:
-
-• Correct Order ID remark is required.
-• Underpaid orders need a top-up.
-• Overpaid orders count only the order amount; extra funds are reviewed by Admin.
-• Rewards will be distributed by 1pm (UTC+4) the next day.`;
+Important:
+• You must enter the correct Order ID as the transfer remark.
+• Underpayments must be topped up before confirmation.
+• Overpayments count only the order amount into the prize pool; the excess amount is handled manually by Admin.
+• Rewards will be distributed by 1pm (UTC+4) on the following day.`;
 }
 
 async function showHowToPlay(ctx) {
@@ -2214,6 +2222,50 @@ async function payCheckSignDebugCommand(ctx) {
   }
 }
 
+
+function formatRawDebugValue(value) {
+  if (value === undefined || value === null || value === "") return "empty";
+  if (typeof value === "object") return truncateForTelegram(value, 180);
+  return String(value);
+}
+
+function buildRawFieldDebugLines(record) {
+  const fields = [
+    "user_id",
+    "client_user_id",
+    "from_uid",
+    "to_uid",
+    "counterparty_uid",
+    "opposite_uid",
+    "payer_uid",
+    "from_user_id",
+    "to_user_id",
+    "from_address",
+    "to_address",
+    "address",
+    "chain_tag",
+    "remark",
+    "num",
+    "amount",
+    "status",
+    "item_id",
+    "type",
+    "exchange_type",
+    "exchange_id",
+    "txid",
+    "create_time"
+  ];
+
+  const lines = ["First raw record key fields (no normalize):"];
+
+  for (const field of fields) {
+    lines.push(`• raw.${field}: ${formatRawDebugValue(record?.[field])}`);
+  }
+
+  return lines;
+}
+
+
 async function payCheckRawCommand(ctx) {
   if (!(await requireAdminControlChat(ctx))) return;
 
@@ -2276,6 +2328,8 @@ async function payCheckRawCommand(ctx) {
           `• to_uid: ${first.toUid || "empty"}`,
           `Raw keys: ${Object.keys(first.raw || {}).slice(0, 25).join(", ") || "none"}`
         );
+
+        lines.push(...buildRawFieldDebugLines(first.raw || {}));
       } else if (raw.json) {
         lines.push(`Top-level keys: ${Object.keys(raw.json || {}).slice(0, 25).join(", ") || "none"}`);
         lines.push(`Raw preview: ${truncateForTelegram(raw.json, 500)}`);
