@@ -4438,63 +4438,32 @@ function buildTopicRulesKeyboard() {
 function buildTopicRulesMessage() {
   return `🏆 UEEx World Cup Prediction Event
 
-Welcome to the UEEx World Cup Prediction Topic!
-Join the event, predict match results, and compete for the prize pool with the community.
+Predict the exact score, join the match prize pool, and share rewards with other winners.
 
-How to Join
+📌 How to Join
 
-1. Tap the “⚽ Start Prediction” button below.
-2. Start the bot and select your language.
-3. Read and accept the event rules.
-4. Choose a match.
-5. Select Win / Draw / Win.
-6. Select the exact score.
-7. Enter your UE amount.
-8. Transfer the amount shown by the bot.
-9. Enter the exact Order ID as your transfer remark.
-10. Your prediction is counted only after payment is confirmed.
+1. Tap “⚽ Start Prediction”.
+2. Choose a match, result direction, exact score, and UE amount.
+3. Transfer the exact amount shown by the bot.
+4. Enter the exact Order ID as the transfer remark.
+5. Your prediction counts only after payment confirmation.
 
-Important Payment Rule
+⚠️ Important
+• Correct Order ID remark is required.
+• Underpaid orders must be topped up.
+• Overpaid orders count only the order amount; extra funds will be reviewed by Admin.
+• Voting closes 15 minutes before kick-off.
 
-You must enter the exact Order ID shown by the bot as the transfer remark.
+🏆 Prize Pool
+• Each match has its own prize pool.
+• UEEx charges a 5% platform fee.
+• Exact-score winners share the net prize pool by confirmed voting amount.
+• Rewards will be distributed by 1pm (UTC+4) the next day.
 
-Example:
-Order ID: O123456
-Transfer remark: O123456
+For full rules, please check the bot menu.
 
-Missing or incorrect remarks will prevent funds from being credited/confirmed automatically.
-
-Payment Handling
-
-• Underpayment:
-If your transfer is lower than the order amount, you must top up the remaining amount. The order will be confirmed only after the total received amount reaches the order amount.
-
-• Overpayment:
-If your transfer is higher than the order amount, only the order amount will be counted into the prize pool. The excess amount will be manually reviewed and handled by Admin.
-
-• Late payment:
-Voting closes 15 minutes before kick-off. Payments received after the deadline may not be counted for that match.
-
-Prize Pool
-
-• Each match has an independent prize pool.
-• UEEx charges a 5% platform fee from each match pool.
-• The remaining net prize pool is shared by exact-score winners.
-• Rewards from all match prize pools will be distributed by 1pm (UTC+4) on the following day.
-
-Match Cancellation / Abnormal Result
-
-If a match is postponed, cancelled, abandoned, or has abnormal result handling, Admin may cancel the match. The public topic will list participants and refund amounts. The Admin group will also list UID data for internal review.
-
-Reminder
-
-Please always follow the amount, address, and Order ID shown by the bot.
-Do not send funds without creating an order first.
-Do not reuse an old Order ID for a new transfer.
-
-UEEx reserves the final right of interpretation for this event.
-
-Good luck and enjoy the World Cup with UEEx! ⚽️`;
+Good luck and enjoy the World Cup with UEEx! ⚽️
+`;
 }
 
 async function sendTopicRules(ctx, shouldPin = true) {
