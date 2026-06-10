@@ -15,8 +15,8 @@ const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
 const UID_MIN = Number(process.env.UID_MIN || 1022220);
 const UID_MAX = Number(process.env.UID_MAX || 35000000);
-const RECEIVER_UID = process.env.RECEIVER_UID || "1234567";
-const TRANSFER_ADDRESS = process.env.TRANSFER_ADDRESS || process.env.UEEX_TRANSFER_ADDRESS || "0x54ff9bbc6fdd9579acf54dd59adcb0689c901035";
+const RECEIVER_UID = process.env.RECEIVER_UID || "34856289";
+const TRANSFER_ADDRESS = process.env.TRANSFER_ADDRESS || process.env.UEEX_TRANSFER_ADDRESS || "0xaa166d764b6967aa98394f61db605370fc8c3872";
 const DEFAULT_CURRENCY = process.env.DEFAULT_CURRENCY || "UE";
 const PLATFORM_FEE_BPS = Number(process.env.PLATFORM_FEE_BPS || 500);
 const MAX_OPEN_MATCHES_SHOWN = Number(process.env.MAX_OPEN_MATCHES_SHOWN || 500);
@@ -63,7 +63,7 @@ const UEEX_FIELD_EXCHANGE_ID = process.env.UEEX_FIELD_EXCHANGE_ID || "";
 const UEEX_FIELD_EXCHANGE_TYPE = process.env.UEEX_FIELD_EXCHANGE_TYPE || "";
 const WORLDCUP_IMAGE_URL = process.env.WORLDCUP_IMAGE_URL || "";
 const WORLDCUP_IMAGE_URL_ZH = process.env.WORLDCUP_IMAGE_URL_ZH || "https://i.ibb.co/PsLDwsDB/Chat-GPT-Image-Jun-8-2026-02-43-59-PM-2.png";
-const PENDING_ORDER_IMAGE_URL = process.env.PENDING_ORDER_IMAGE_URL || "https://ibb.co/sdzpYKj3";
+const PENDING_ORDER_IMAGE_URL = process.env.PENDING_ORDER_IMAGE_URL || "https://ibb.co/NdLrz2qq";
 const ORDER_CONFIRMED_IMAGE_URL = process.env.ORDER_CONFIRMED_IMAGE_URL || "";
 const WELCOME_IMAGE_URL =
   process.env.WELCOME_IMAGE_URL ||
@@ -91,7 +91,7 @@ const ORDER_CANCELLED_IMAGE_URL =
   "https://i.ibb.co/zV2pxQNm/Chat-GPT-Image-Jun-8-2026-01-26-00-PM.png";
 const TOPIC_RULES_IMAGE_URL = process.env.TOPIC_RULES_IMAGE_URL || "https://i.ibb.co/GfxngkkL/Chat-GPT-Image-Jun-4-2026-10-34-19-AM-1.png";
 const ORDER_CANCELLED_IMAGE_URL_ZH = process.env.ORDER_CANCELLED_IMAGE_URL_ZH || "https://i.ibb.co/Vpj2PBwP/Chat-GPT-Image-Jun-8-2026-02-43-59-PM-1.png";
-const PENDING_ORDER_IMAGE_URL_ZH = process.env.PENDING_ORDER_IMAGE_URL_ZH || "https://ibb.co/sk7DBck";
+const PENDING_ORDER_IMAGE_URL_ZH = process.env.PENDING_ORDER_IMAGE_URL_ZH || "https://ibb.co/CKFt3NSZ";
 const ORDER_CONFIRMED_IMAGE_URL_ZH = process.env.ORDER_CONFIRMED_IMAGE_URL_ZH || "https://i.ibb.co/7xnyz5x1/Chat-GPT-Image-Jun-8-2026-02-43-59-PM-4.png";
 const LOSER_IMAGE_URL_ZH = process.env.LOSER_IMAGE_URL_ZH || "https://i.ibb.co/9Hf2VkrT/Chat-GPT-Image-Jun-8-2026-02-43-59-PM-5.png";
 const WINNER_IMAGE_URL_ZH = process.env.WINNER_IMAGE_URL_ZH || "https://i.ibb.co/4RLw4LrR/Chat-GPT-Image-Jun-8-2026-02-43-59-PM-6.png";
@@ -930,11 +930,13 @@ function getPrivateMainMenu(ctxOrLang = null) {
       keyboard: zh
         ? [
             [{ text: "⚽ 比赛" }, { text: "📊 我的投票" }],
-            [{ text: "📜 规则" }, { text: "🛟 客服" }]
+            [{ text: "🎮 玩法" }, { text: "📜 规则" }],
+            [{ text: "🛟 客服" }]
           ]
         : [
             [{ text: "⚽ Matches" }, { text: "📊 My Vote" }],
-            [{ text: "📜 Rules" }, { text: "🛟 Support" }]
+            [{ text: "🎮 How to Play" }, { text: "📜 Rules" }],
+            [{ text: "🛟 Support" }]
           ],
       resize_keyboard: true,
       one_time_keyboard: false,
@@ -1027,25 +1029,35 @@ function getPendingOrderKeyboard(orderCode, ctxOrLang = null) {
 }
 
 function buildRulesMessage(ctxOrLang = null) {
+  const feePercent = formatAmount(new Decimal(PLATFORM_FEE_BPS).div(100));
+
   if (isZh(ctxOrLang)) {
     return `1. 点击“比赛”，选择比赛日期、比赛、预测方向、准确比分和 UE 投票金额。
 2. 最低投票金额：${formatAmount(MIN_BET_AMOUNT)} UE。
 3. 创建待支付订单后，请将对应 UE 金额转账至 BSC 地址：${TRANSFER_ADDRESS}。
-4. 转账备注必须填写订单 ID。订单仅在付款确认后计入。
-5. 如果转账金额、备注或其他信息不正确，订单可能无法自动确认。
-6. 比赛结果录入后，猜中用户将按已确认投票金额比例瓜分净奖池。
-7. 平台手续费：${formatAmount(new Decimal(PLATFORM_FEE_BPS).div(100))}%。
-8. UEEx 保留对异常行为、无效付款及最终奖励资格进行审核的权利。`;
+4. 订单备注必须准确填写 Bot 显示的订单 ID。未填写备注或填写错误，将导致资金无法自动上账/确认。
+5. 如果转账低于订单金额，用户需继续补足剩余订单金额，累计到账达到订单金额后才可确认订单。
+6. 如果转账高于订单金额，系统仅按订单金额计入奖池，超出部分由 Admin 人工核对并补账/处理。
+7. 比赛开赛前 15 分钟停止下注。截止后到账的订单原则上不计入该场比赛。
+8. 比赛结果录入后，猜中准确比分的用户将按已确认投票金额比例瓜分净奖池。
+9. 平台手续费：${feePercent}%，从每场总奖池中扣除。
+10. 所有比赛的奖池瓜分所得将在次日 1pm（UTC+4）前完成发放。
+11. 如赛事延期、取消或赛果异常，Admin 将取消该场赛事并公布参与者及退款金额；实际退款以 Admin/财务复核为准。
+12. UEEx 保留对异常行为、无效付款、补账、退款及最终奖励资格进行审核的权利。`;
   }
 
   return `1. Tap Matches and select a match day, match, prediction type, exact score, and UE voting amount.
 2. Minimum voting amount: ${formatAmount(MIN_BET_AMOUNT)} UE.
-3. After creating a pending order, transfer the exact UE amount to the BSC address ${TRANSFER_ADDRESS}.
-4. Use your Order ID as the transfer remark. Orders are counted only after payment confirmation.
-5. If your transfer amount, remark, or other information is incorrect, your vote may not be confirmed automatically.
-6. After the match result is recorded, winning users share the net pool according to their confirmed voting amount.
-7. Platform fee: ${formatAmount(new Decimal(PLATFORM_FEE_BPS).div(100))}%.
-8. UEEx reserves the right to review abnormal activity, invalid payments, and final reward eligibility.`;
+3. After creating a pending order, transfer the required UE amount to the BSC address ${TRANSFER_ADDRESS}.
+4. You must enter the exact Order ID shown by the bot as the transfer remark. Missing or incorrect remarks will prevent funds from being credited/confirmed automatically.
+5. If your transfer is lower than the order amount, you must top up the remaining amount before the order can be confirmed.
+6. If your transfer is higher than the order amount, only the order amount will be counted into the prize pool. The excess amount will be manually reviewed and handled by Admin.
+7. Betting closes 15 minutes before kick-off. Payments received after the deadline may not be counted for that match.
+8. After the match result is recorded, exact-score winners share the net prize pool according to their confirmed voting amount.
+9. Platform fee: ${feePercent}%, deducted from each match pool.
+10. Rewards from all match prize pools will be distributed by 1pm (UTC+4) on the following day.
+11. If a match is postponed, cancelled, abandoned, or has abnormal result handling, Admin will cancel the match and publish the participant/refund list. Final refunds are subject to Admin/Finance review.
+12. UEEx reserves the right to review abnormal activity, invalid payments, top-ups, refunds, and final reward eligibility.`;
 }
 
 async function showRules(ctx) {
@@ -1055,6 +1067,89 @@ async function showRules(ctx) {
 
   const sent = await replyWithOptionalPhoto(ctx, getLocalizedImageUrl(ctx, RULES_IMAGE_URL, RULES_IMAGE_URL_ZH), buildRulesMessage(ctx), getPrivateMainMenu(ctx));
   return rememberPrivateMenuMessage(ctx, sent, "rules");
+}
+
+function buildHowToPlayMessage(ctxOrLang = null) {
+  const feePercent = formatAmount(new Decimal(PLATFORM_FEE_BPS).div(100));
+
+  if (isZh(ctxOrLang)) {
+    return `🎮 玩法说明
+
+如何参与：
+1. 点击“比赛”。
+2. 选择比赛日期和比赛。
+3. 选择胜平负方向。
+4. 选择准确比分。
+5. 输入参与金额。
+6. 按 Bot 显示的金额转账至官方收款地址。
+7. 转账备注必须准确填写订单 ID。
+8. 付款确认后，该订单才会计入奖池。
+
+如何瓜分奖池：
+• 每场比赛独立奖池。
+• 平台从总奖池收取 ${feePercent}% 手续费。
+• 扣除手续费后为净奖池。
+• 猜中准确比分的用户，按照各自已确认投票金额占中奖池的比例瓜分净奖池。
+
+示例：
+总奖池：10,000 UE
+平台手续费：${feePercent}%
+净奖池：9,500 UE
+
+如果准确比分中奖池为 5,000 UE，你投入 1,000 UE，占中奖池 20%，则预计获得净奖池 20%。
+
+重要提醒：
+• 必须填写正确订单备注。
+• 少转需补足后才可确认。
+• 多转只按订单金额计入奖池，超出部分由 Admin 人工处理。
+• 奖池瓜分所得将在次日 1pm（UTC+4）前完成发放。`;
+  }
+
+  return `🎮 How to Play
+
+How to join:
+1. Tap Matches.
+2. Select a match day and match.
+3. Select Win / Draw / Win.
+4. Select the exact score.
+5. Enter your UE amount.
+6. Transfer the amount shown by the bot to the official receiving address.
+7. Enter the exact Order ID as the transfer remark.
+8. Your order is counted into the pool only after payment confirmation.
+
+How the prize pool is shared:
+• Each match has an independent prize pool.
+• UEEx charges a ${feePercent}% platform fee from the total pool.
+• The remaining amount is the net prize pool.
+• Exact-score winners share the net prize pool proportionally based on their confirmed voting amount.
+
+Example:
+Total pool: 10,000 UE
+Platform fee: ${feePercent}%
+Net pool: 9,500 UE
+
+If the exact-score winning pool is 5,000 UE and your confirmed vote is 1,000 UE, you own 20% of the winning pool and receive around 20% of the net pool.
+
+Important:
+• You must enter the correct Order ID as the transfer remark.
+• Underpayments must be topped up before confirmation.
+• Overpayments count only the order amount into the prize pool; the excess amount is handled manually by Admin.
+• Rewards will be distributed by 1pm (UTC+4) on the following day.`;
+}
+
+async function showHowToPlay(ctx) {
+  if (isPrivateChat(ctx)) {
+    await deleteLastPrivateMenuMessage(ctx, "howtoplay");
+  }
+
+  const sent = await replyWithOptionalPhoto(
+    ctx,
+    getLocalizedImageUrl(ctx, WORLDCUP_IMAGE_URL, WORLDCUP_IMAGE_URL_ZH),
+    buildHowToPlayMessage(ctx),
+    getPrivateMainMenu(ctx)
+  );
+
+  return rememberPrivateMenuMessage(ctx, sent, "howtoplay");
 }
 
 
@@ -1624,7 +1719,6 @@ function decimalEquals(a, b) {
 function paymentRecordMatchesOrder(record, order) {
   if (!record) return { ok: false, reason: "Record missing" };
   if (record.remark !== order.order_code) return { ok: false, reason: "Remark does not match order ID" };
-  if (!decimalEquals(record.amount, order.expected_amount)) return { ok: false, reason: "Amount does not match order amount" };
 
   if (String(record.status).toLowerCase() !== String(UEEX_SUCCESS_STATUS).toLowerCase()) {
     return { ok: false, reason: "Payment status is not success" };
@@ -1747,41 +1841,94 @@ async function autoConfirmPendingOrders(ctx = null) {
 
     if (!matchingRecords.length) continue;
 
+    const validUnusedRecords = [];
+
     for (const record of matchingRecords) {
       const matchResult = paymentRecordMatchesOrder(record, order);
 
       if (!matchResult.ok) {
-        await supabase
-          .from("wc_orders")
-          .update({
-            payment_checked_at: new Date().toISOString(),
-            auto_confirm_error: matchResult.reason,
-            updated_at: new Date().toISOString()
-          })
-          .eq("order_code", order.order_code);
         errors.push(`${order.order_code}: ${matchResult.reason}`);
         continue;
       }
 
       const used = await isPaymentRecordAlreadyUsed(record.exchangeId);
       if (used) {
-        errors.push(`${order.order_code}: payment record already used`);
+        errors.push(`${order.order_code}: payment record already used ${record.exchangeId}`);
         continue;
       }
 
+      validUnusedRecords.push(record);
+    }
+
+    if (!validUnusedRecords.length) continue;
+
+    const receivedAmount = validUnusedRecords.reduce((sum, record) => {
+      try {
+        return sum.plus(record.amount || 0);
+      } catch (error) {
+        return sum;
+      }
+    }, new Decimal(0));
+
+    const expectedAmount = new Decimal(order.expected_amount || 0);
+
+    if (receivedAmount.lt(expectedAmount)) {
+      const remainingAmount = expectedAmount.minus(receivedAmount);
+      const underpayReason = `Partial payment received ${formatAmount(receivedAmount)} ${order.currency || DEFAULT_CURRENCY}; remaining ${formatAmount(remainingAmount)} ${order.currency || DEFAULT_CURRENCY} required before confirmation`;
+
+      await supabase
+        .from("wc_orders")
+        .update({
+          payment_checked_at: new Date().toISOString(),
+          auto_confirm_error: underpayReason,
+          updated_at: new Date().toISOString()
+        })
+        .eq("order_code", order.order_code);
+
+      errors.push(`${order.order_code}: ${underpayReason}`);
+      continue;
+    }
+
+    for (const record of validUnusedRecords) {
       record.paymentFromUid = order.ueex_uid;
       record.paymentToUid = UEEX_RECEIVER_UID;
       await savePaymentRecord(record, order.order_code);
-      await confirmOrderByCode(ctx, order.order_code, new Decimal(record.amount), {
-        autoConfirmed: true,
-        paymentRecord: record
-      });
-      confirmed += 1;
-      break;
     }
+
+    const overpaidAmount = receivedAmount.minus(expectedAmount);
+    const primaryRecord = {
+      ...validUnusedRecords[0],
+      combinedAmount: receivedAmount.toFixed(),
+      expectedAmount: expectedAmount.toFixed(),
+      overpaidAmount: overpaidAmount.gt(0) ? overpaidAmount.toFixed() : "0",
+      paymentExchangeIds: validUnusedRecords.map((record) => record.exchangeId).join(",")
+    };
+
+    await confirmOrderByCode(ctx, order.order_code, expectedAmount, {
+      autoConfirmed: true,
+      paymentRecord: primaryRecord
+    });
+
+    if (overpaidAmount.gt(0)) {
+      await notifyAdminGroup(`⚠️ Overpayment Detected
+
+Order ID: ${order.order_code}
+UID: ${order.ueex_uid}
+TG: ${getTelegramUserLabel(order)}
+Expected Amount: ${formatAmount(expectedAmount)} ${order.currency || DEFAULT_CURRENCY}
+Received Amount: ${formatAmount(receivedAmount)} ${order.currency || DEFAULT_CURRENCY}
+Excess Amount: ${formatAmount(overpaidAmount)} ${order.currency || DEFAULT_CURRENCY}
+
+The order has been confirmed with the expected amount only. Please manually review the excess amount.
+
+Suggested command after manual handling:
+/compensate_${order.order_code}_${formatAmountForCommand(overpaidAmount)}`);
+    }
+
+    confirmed += 1;
   }
 
-  const message = `Payment check completed. Pending checked: ${pendingOrders.length}. Records fetched: ${records.length}. Auto confirmed: ${confirmed}.${errors.length ? `\n\nSkipped:\n${errors.slice(0, 10).join("\n")}` : ""}`;
+  const message = `Payment check completed. Pending checked: ${pendingOrders.length}. Records fetched: ${records.length}. Auto confirmed: ${confirmed}.${errors.length ? `\n\nSkipped / Waiting:\n${errors.slice(0, 10).join("\n")}` : ""}`;
 
   if (ctx) await ctx.reply(message);
 
@@ -2674,8 +2821,12 @@ async function handleAmountInput(ctx, text, session) {
 🔸 选择：${escapeHtml(formatSelectionWithFlags(match, data.selection))}
 🔸 金额：${formatAmount(amount)} ${match.currency}
 
-❗️请转账 ${formatAmount(amount)} ${match.currency} 到以下 BSC 地址：\n<code>${escapeHtml(TRANSFER_ADDRESS)}</code>
-❗️转账备注：<code>${escapeHtml(data.order_code)}</code>
+❗️请转账 ${formatAmount(amount)} ${match.currency} 到以下 BSC 地址：
+<code>${escapeHtml(TRANSFER_ADDRESS)}</code>
+❗️转账备注必须准确填写：<code>${escapeHtml(data.order_code)}</code>
+⚠️ 未填写备注或备注错误，将导致资金无法自动上账/确认。
+⚠️ 如少转，请继续补足剩余金额；累计到账达到订单金额后才可确认。
+⚠️ 如多转，系统仅按订单金额计入奖池，超出部分由 Admin 人工核对处理。
 ❗️你的投票将在付款确认后计入。`
     : `⚽️ Match: ${formatTeamWithFlag(match.team_a)} vs ${formatTeamWithFlag(match.team_b)}
 
@@ -2686,8 +2837,12 @@ async function handleAmountInput(ctx, text, session) {
 🔸 Selection: ${escapeHtml(formatSelectionWithFlags(match, data.selection))}
 🔸 Amount: ${formatAmount(amount)} ${match.currency}
 
-❗️Please transfer ${formatAmount(amount)} ${match.currency} to the BSC address below:\n<code>${escapeHtml(TRANSFER_ADDRESS)}</code>.
-❗️Transfer Remark: <code>${escapeHtml(data.order_code)}</code>
+❗️Please transfer ${formatAmount(amount)} ${match.currency} to the BSC address below:
+<code>${escapeHtml(TRANSFER_ADDRESS)}</code>.
+❗️Transfer Remark must be exactly: <code>${escapeHtml(data.order_code)}</code>
+⚠️ Missing or incorrect remarks will prevent funds from being credited/confirmed automatically.
+⚠️ If you underpay, please top up the remaining amount. The order can be confirmed only after the total received amount reaches the order amount.
+⚠️ If you overpay, only the order amount is counted into the prize pool. The excess amount will be manually reviewed by Admin.
 ❗️Your vote will be counted after payment confirmation.`;
 
   const pendingMessage = await replyWithOptionalPhoto(
@@ -3984,6 +4139,168 @@ ${lines.join("\n\n")}`);
 }
 
 
+async function compensateOrder(ctx, text) {
+  if (!(await requireAdminControlChat(ctx))) return;
+
+  const cleaned = cleanCommandText(text);
+  const match = cleaned.match(/^\/compensate_([A-Z0-9]+)_([0-9]+(?:\.[0-9]{1,8})?)$/i);
+
+  if (!match) {
+    return ctx.reply("Invalid format. Example: /compensate_O000123_2000");
+  }
+
+  const orderCode = match[1].toUpperCase();
+  const amount = parsePositiveAmount(match[2]);
+
+  if (!amount) {
+    return ctx.reply("Invalid amount.");
+  }
+
+  const { data: order, error } = await supabase
+    .from("wc_orders")
+    .select("*")
+    .eq("order_code", orderCode)
+    .maybeSingle();
+
+  if (error || !order) {
+    return ctx.reply("Order not found.");
+  }
+
+  const matchData = await getMatch(order.match_code);
+  const message = isZh(order.telegram_id)
+    ? `💳 补账/人工处理通知
+
+订单 ID：${order.order_code}
+比赛：${matchData ? `${formatTeamWithFlag(matchData.team_a)} vs ${formatTeamWithFlag(matchData.team_b)}` : order.match_code}
+补账/处理金额：${formatAmount(amount)} ${order.currency || DEFAULT_CURRENCY}
+
+该金额已由 Admin 记录并将进行人工处理。如有疑问请联系 @UEEx_JJ。`
+    : `💳 Manual Compensation Notice
+
+Order ID: ${order.order_code}
+Match: ${matchData ? `${formatTeamWithFlag(matchData.team_a)} vs ${formatTeamWithFlag(matchData.team_b)}` : order.match_code}
+Compensation / handling amount: ${formatAmount(amount)} ${order.currency || DEFAULT_CURRENCY}
+
+This amount has been recorded by Admin for manual handling. Contact @UEEx_JJ if you need help.`;
+
+  let userNotified = true;
+  try {
+    await bot.telegram.sendMessage(order.telegram_id, message);
+  } catch (notifyError) {
+    userNotified = false;
+    console.error("Failed to notify compensated user:", notifyError.message);
+  }
+
+  await notifyAdminGroup(`💳 Manual Compensation Recorded
+
+Order ID: ${order.order_code}
+Match ID: ${order.match_code}
+UID: ${order.ueex_uid}
+TG: ${getTelegramUserLabel(order)}
+Amount: ${formatAmount(amount)} ${order.currency || DEFAULT_CURRENCY}
+User Notified: ${userNotified ? "yes" : "no"}`, ctx);
+
+  return ctx.reply(`✅ Compensation recorded for ${orderCode}: ${formatAmount(amount)} ${order.currency || DEFAULT_CURRENCY}. User notified: ${userNotified ? "yes" : "no"}`);
+}
+
+function buildPublicCancellationMessage(matchData, orders) {
+  const lines = orders.map((order, index) => {
+    return `${index + 1}. ${getPublicUserLabel(order, index)}
+   Refund Amount: ${formatAmount(order.confirmed_amount || order.expected_amount)} ${order.currency || matchData.currency || DEFAULT_CURRENCY}`;
+  });
+
+  return `⚠️ Match Cancelled / Refund Notice
+
+⚽️ ${formatTeamWithFlag(matchData.team_a)} vs ${formatTeamWithFlag(matchData.team_b)}
+🔸 Match ID: ${matchData.match_code}
+🔸 Reason: match postponed, cancelled, abandoned, or abnormal result handling
+
+Refund List:
+${lines.length ? lines.join("\n\n") : "No confirmed participants."}
+
+Admin will manually review and arrange refunds.`;
+}
+
+function buildAdminCancellationMessage(matchData, orders) {
+  const lines = orders.map((order, index) => {
+    return `${index + 1}. ${getTelegramUserLabel(order)} / UID ${order.ueex_uid}
+   Order ID: ${order.order_code}
+   Selection: ${formatSelectionWithFlags(matchData, order.selection)}
+   Refund Amount: ${formatAmount(order.confirmed_amount || order.expected_amount)} ${order.currency || matchData.currency || DEFAULT_CURRENCY}`;
+  });
+
+  return `⚠️ Match Cancelled
+
+⚽️ ${formatTeamWithFlag(matchData.team_a)} vs ${formatTeamWithFlag(matchData.team_b)}
+🔸 Match ID: ${matchData.match_code}
+
+Refund List:
+${lines.length ? lines.join("\n\n") : "No confirmed participants."}`;
+}
+
+async function cancelMatch(ctx, text) {
+  if (!(await requireAdminControlChat(ctx))) return;
+
+  const cleaned = cleanCommandText(text);
+  const match = cleaned.match(/^\/cancel_(WC[A-Z0-9]+)$/i);
+
+  if (!match) {
+    return ctx.reply("Invalid format. Example: /cancel_WC0001");
+  }
+
+  const matchCode = match[1].toUpperCase();
+  const matchData = await getMatch(matchCode);
+
+  if (!matchData) {
+    return ctx.reply("Match not found.");
+  }
+
+  const orders = await loadConfirmedOrders(matchCode);
+
+  await supabase
+    .from("wc_matches")
+    .update({
+      status: "cancelled",
+      updated_at: new Date().toISOString()
+    })
+    .eq("match_code", matchCode);
+
+  const publicMessage = buildPublicCancellationMessage(matchData, orders);
+  const adminMessage = buildAdminCancellationMessage(matchData, orders);
+
+  const publicNotifyResult = await notifyPublicWorldCupTopicLong(publicMessage, MATCH_SETTLED_IMAGE_URL);
+  await replyLongMessage(ctx, `${adminMessage}
+
+Public Topic Notification: ${publicNotifyResult ? "sent" : "failed or not configured"}
+
+Refunds should be handled manually after Admin/Finance review.`);
+
+  for (const order of orders) {
+    try {
+      const userMessage = isZh(order.telegram_id)
+        ? `⚠️ 赛事取消/退款通知
+
+比赛：${formatTeamWithFlag(matchData.team_a)} vs ${formatTeamWithFlag(matchData.team_b)}
+订单 ID：${order.order_code}
+退款金额：${formatAmount(order.confirmed_amount || order.expected_amount)} ${order.currency || matchData.currency || DEFAULT_CURRENCY}
+
+Admin 将进行人工复核并安排退款。`
+        : `⚠️ Match Cancelled / Refund Notice
+
+Match: ${formatTeamWithFlag(matchData.team_a)} vs ${formatTeamWithFlag(matchData.team_b)}
+Order ID: ${order.order_code}
+Refund Amount: ${formatAmount(order.confirmed_amount || order.expected_amount)} ${order.currency || matchData.currency || DEFAULT_CURRENCY}
+
+Admin will manually review and arrange the refund.`;
+
+      await bot.telegram.sendMessage(order.telegram_id, userMessage);
+    } catch (error) {
+      console.error(`Failed to notify cancelled match user ${order.telegram_id}:`, error.message);
+    }
+  }
+}
+
+
 function getStartPredictionUrl() {
   if (!BOT_USERNAME) return null;
   return `https://t.me/${BOT_USERNAME}?start=worldcup`;
@@ -4011,46 +4328,52 @@ How to Join
 2. Start the bot and select your language.
 3. Read and accept the event rules.
 4. Choose a match.
-5. Select your prediction:
-   • Team A Win
-   • Draw
-   • Team B Win
+5. Select Win / Draw / Win.
 6. Select the exact score.
 7. Enter your UE amount.
-8. Transfer the exact amount shown by the bot.
-9. Use your Order ID as the transfer remark.
-10. Your prediction will only be counted after payment is confirmed.
+8. Transfer the amount shown by the bot.
+9. Enter the exact Order ID as your transfer remark.
+10. Your prediction is counted only after payment is confirmed.
 
 Important Payment Rule
 
-Please make sure your transfer remark is exactly the Order ID shown by the bot.
+You must enter the exact Order ID shown by the bot as the transfer remark.
 
 Example:
 Order ID: O123456
 Transfer remark: O123456
 
-If the remark is missing or incorrect, the bot may not be able to confirm your order automatically. The order may require manual review and may not be counted before the match deadline.
+Missing or incorrect remarks will prevent funds from being credited/confirmed automatically.
 
-Event Rules
+Payment Handling
 
-1. All predictions must be submitted through the official UEEx World Cup Bot.
-2. Each prediction order is valid only after the payment is confirmed.
-3. Please transfer the exact UE amount shown by the bot. If the transferred amount is lower or higher than the order amount, the order may not be confirmed automatically.
-4. Betting for each match closes 15 minutes before the scheduled kick-off time.
-5. Payments completed after the betting deadline may not be counted for that match.
-6. The final result is based on the official match result after regular time, including stoppage time. Extra time and penalties are not counted unless UEEx announces otherwise.
-7. If the match is postponed, cancelled, abandoned, or has an abnormal result situation, UEEx reserves the right to void, postpone, or manually review the related prediction orders.
-8. The prize pool is shared among users who selected the correct exact score. Rewards are calculated based on each winner’s confirmed prediction amount and the final net prize pool.
-9. If there are no exact-score winners for a match, UEEx may manually review the pool and announce the final handling method.
-10. Orders with incorrect amount, missing remark, wrong remark, late payment, duplicate payment, or other abnormal payment issues may require manual review.
-11. Users are responsible for checking their own order status in the bot. You can use “My Vote” to view your prediction records.
-12. UEEx reserves the final right of interpretation for this event.
+• Underpayment:
+If your transfer is lower than the order amount, you must top up the remaining amount. The order will be confirmed only after the total received amount reaches the order amount.
+
+• Overpayment:
+If your transfer is higher than the order amount, only the order amount will be counted into the prize pool. The excess amount will be manually reviewed and handled by Admin.
+
+• Late payment:
+Betting closes 15 minutes before kick-off. Payments received after the deadline may not be counted for that match.
+
+Prize Pool
+
+• Each match has an independent prize pool.
+• UEEx charges a 5% platform fee from each match pool.
+• The remaining net prize pool is shared by exact-score winners.
+• Rewards from all match prize pools will be distributed by 1pm (UTC+4) on the following day.
+
+Match Cancellation / Abnormal Result
+
+If a match is postponed, cancelled, abandoned, or has abnormal result handling, Admin may cancel the match. The public topic will list participants and refund amounts. The Admin group will also list UID data for internal review.
 
 Reminder
 
 Please always follow the amount, address, and Order ID shown by the bot.
 Do not send funds without creating an order first.
 Do not reuse an old Order ID for a new transfer.
+
+UEEx reserves the final right of interpretation for this event.
 
 Good luck and enjoy the World Cup with UEEx! ⚽️`;
 }
@@ -4561,6 +4884,16 @@ bot.on("message", async (ctx) => {
       return settleMatch(ctx, cleaned);
     }
 
+    if (/^\/cancel_/i.test(cleaned)) {
+      if (!(await requireAdminControlChat(ctx))) return;
+      return cancelMatch(ctx, cleaned);
+    }
+
+    if (/^\/compensate_/i.test(cleaned)) {
+      if (!(await requireAdminControlChat(ctx))) return;
+      return compensateOrder(ctx, cleaned);
+    }
+
     if (/^\/paycheck$/i.test(cleaned)) {
       return payCheckCommand(ctx);
     }
@@ -4614,6 +4947,20 @@ bot.on("message", async (ctx) => {
       }
 
       return showRules(ctx);
+    }
+
+    if (isPrivateChat(ctx) && ["🎮 How to Play", "How to Play", "how to play", "玩法", "🎮 玩法"].includes(cleaned)) {
+      clearSession(ctx);
+
+      if (!hasSelectedLanguage(ctx)) {
+        return showLanguageSelection(ctx);
+      }
+
+      if (!hasAcceptedRules(ctx)) {
+        return showStartRules(ctx);
+      }
+
+      return showHowToPlay(ctx);
     }
 
     if (isPrivateChat(ctx) && ["🛟 Support", "Support", "support", "Help", "help", "🛟 客服", "客服"].includes(cleaned)) {
