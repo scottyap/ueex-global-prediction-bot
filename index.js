@@ -89,6 +89,7 @@ const MATCH_SETTLED_IMAGE_URL =
 const ORDER_CANCELLED_IMAGE_URL =
   process.env.ORDER_CANCELLED_IMAGE_URL ||
   "https://i.ibb.co/zV2pxQNm/Chat-GPT-Image-Jun-8-2026-01-26-00-PM.png";
+const TOPIC_RULES_IMAGE_URL = process.env.TOPIC_RULES_IMAGE_URL || "https://i.ibb.co/GfxngkkL/Chat-GPT-Image-Jun-4-2026-10-34-19-AM-1.png";
 const ORDER_CANCELLED_IMAGE_URL_ZH = process.env.ORDER_CANCELLED_IMAGE_URL_ZH || "https://i.ibb.co/Vpj2PBwP/Chat-GPT-Image-Jun-8-2026-02-43-59-PM-1.png";
 const PENDING_ORDER_IMAGE_URL_ZH = process.env.PENDING_ORDER_IMAGE_URL_ZH || "https://ibb.co/sk7DBck";
 const ORDER_CONFIRMED_IMAGE_URL_ZH = process.env.ORDER_CONFIRMED_IMAGE_URL_ZH || "https://i.ibb.co/7xnyz5x1/Chat-GPT-Image-Jun-8-2026-02-43-59-PM-4.png";
@@ -580,9 +581,9 @@ function getSelectionOutcome(selection) {
 }
 
 function getOutcomeLabel(match, outcome, ctxOrLang = null) {
-  if (outcome === "A") return `${formatTeamWithFlag(match.team_a)} ${isZh(ctxOrLang) ? "胜" : "Win"}`;
-  if (outcome === "B") return `${formatTeamWithFlag(match.team_b)} ${isZh(ctxOrLang) ? "胜" : "Win"}`;
-  return isZh(ctxOrLang) ? "平局" : "Draw";
+  if (outcome === "A") return `${getTeamFlag(match.team_a)} Win`;
+  if (outcome === "B") return `${getTeamFlag(match.team_b)} Win`;
+  return "Draw";
 }
 
 function getOutcomeCallbackLabel(match, outcome, totals = null, ctxOrLang = null) {
@@ -1092,7 +1093,7 @@ function buildOutcomeKeyboard(match, totals, ctxOrLang = null) {
   return Markup.inlineKeyboard([
     [
       Markup.button.callback(getOutcomeCallbackLabel(match, "A", null, ctxOrLang), `wcoutcome:${match.match_code}:A`),
-      Markup.button.callback(isZh(ctxOrLang) ? "平局" : "Draw", `wcoutcome:${match.match_code}:DRAW`),
+      Markup.button.callback("Draw", `wcoutcome:${match.match_code}:DRAW`),
       Markup.button.callback(getOutcomeCallbackLabel(match, "B", null, ctxOrLang), `wcoutcome:${match.match_code}:B`)
     ],
     [Markup.button.callback(isZh(ctxOrLang) ? "返回" : "Back", `wcdate:${encodeDateKey(dateKey)}`)]
@@ -4072,6 +4073,18 @@ async function sendTopicRules(ctx, shouldPin = true) {
   const keyboard = buildTopicRulesKeyboard();
   const text = buildTopicRulesMessage();
 
+  let imageStatus = TOPIC_RULES_IMAGE_URL ? "not sent" : "not configured";
+
+  if (TOPIC_RULES_IMAGE_URL) {
+    try {
+      await bot.telegram.sendPhoto(PUBLIC_GROUP_CHAT_ID, TOPIC_RULES_IMAGE_URL, topicOptions);
+      imageStatus = "sent";
+    } catch (error) {
+      imageStatus = `failed: ${error.message}`;
+      console.error("Send topic rules image error:", error.message);
+    }
+  }
+
   let sentMessage;
   try {
     sentMessage = await bot.telegram.sendMessage(
@@ -4106,6 +4119,7 @@ async function sendTopicRules(ctx, shouldPin = true) {
 Public group: ${PUBLIC_GROUP_CHAT_ID}
 Topic ID: ${PUBLIC_WORLD_CUP_TOPIC_ID || "main chat"}
 Message ID: ${sentMessage.message_id}
+Image status: ${imageStatus}
 Pin status: ${pinStatus}`);
 }
 
