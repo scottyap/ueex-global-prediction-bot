@@ -103,7 +103,7 @@ const MATCH_SETTLED_IMAGE_URL_ZH = process.env.MATCH_SETTLED_IMAGE_URL_ZH || "ht
 const RULES_IMAGE_URL_ZH = process.env.RULES_IMAGE_URL_ZH || "https://i.ibb.co/qMjDRwgH/Chat-GPT-Image-Jun-8-2026-02-43-59-PM-8.png";
 const SUPPORT_IMAGE_URL_ZH = process.env.SUPPORT_IMAGE_URL_ZH || "https://i.ibb.co/spJjGyg8/Chat-GPT-Image-Jun-8-2026-02-43-59-PM-9.png";
 const MYVOTE_IMAGE_URL_ZH = process.env.MYVOTE_IMAGE_URL_ZH || "https://i.ibb.co/mrQJkKqy/Chat-GPT-Image-Jun-8-2026-02-43-59-PM-10.png";
-const TELEGRAM_CAPTION_SAFE_LIMIT = 900;
+const TELEGRAM_CAPTION_SAFE_LIMIT = 1000;
 const ADMIN_GROUP_CHAT_ID = process.env.ADMIN_GROUP_CHAT_ID || "";
 const PUBLIC_GROUP_CHAT_ID = process.env.PUBLIC_GROUP_CHAT_ID || process.env.PUBLIC_CHAT_ID || "";
 const PUBLIC_WORLD_CUP_TOPIC_ID = process.env.PUBLIC_WORLD_CUP_TOPIC_ID || process.env.WORLD_CUP_TOPIC_ID || "";
@@ -4441,7 +4441,6 @@ function buildTopicRulesMessage() {
 Predict the exact score, join the match prize pool, and share rewards with other winners.
 
 📌 How to Join
-
 1. Tap “⚽ Start Prediction”.
 2. Choose a match, result direction, exact score, and UE amount.
 3. Transfer the exact amount shown by the bot.
@@ -4462,8 +4461,7 @@ Predict the exact score, join the match prize pool, and share rewards with other
 
 For full rules, please check the bot menu.
 
-Good luck and enjoy the World Cup with UEEx! ⚽️
-`;
+Good luck and enjoy the World Cup with UEEx! ⚽️`;
 }
 
 async function sendTopicRules(ctx, shouldPin = true) {
@@ -4484,27 +4482,14 @@ async function sendTopicRules(ctx, shouldPin = true) {
   const keyboard = buildTopicRulesKeyboard();
   const text = buildTopicRulesMessage();
 
-  let imageStatus = TOPIC_RULES_IMAGE_URL ? "not sent" : "not configured";
-
-  if (TOPIC_RULES_IMAGE_URL) {
-    try {
-      await bot.telegram.sendPhoto(PUBLIC_GROUP_CHAT_ID, TOPIC_RULES_IMAGE_URL, topicOptions);
-      imageStatus = "sent";
-    } catch (error) {
-      imageStatus = `failed: ${error.message}`;
-      console.error("Send topic rules image error:", error.message);
-    }
-  }
-
   let sentMessage;
   try {
-    sentMessage = await bot.telegram.sendMessage(
+    sentMessage = await sendOptionalPhoto(
       PUBLIC_GROUP_CHAT_ID,
+      TOPIC_RULES_IMAGE_URL,
       text,
-      {
-        ...topicOptions,
-        ...(keyboard?.reply_markup ? { reply_markup: keyboard.reply_markup } : {})
-      }
+      keyboard,
+      topicOptions
     );
   } catch (error) {
     console.error("Send topic rules error:", error);
@@ -4525,15 +4510,13 @@ async function sendTopicRules(ctx, shouldPin = true) {
     }
   }
 
-  return ctx.reply(`✅ Topic rules sent.
+  return ctx.reply(`✅ Topic rules sent as one photo message with caption.
 
 Public group: ${PUBLIC_GROUP_CHAT_ID}
 Topic ID: ${PUBLIC_WORLD_CUP_TOPIC_ID || "main chat"}
 Message ID: ${sentMessage.message_id}
-Image status: ${imageStatus}
 Pin status: ${pinStatus}`);
 }
-
 
 async function showAdminHelp(ctx) {
   const text = `⚽ UEEx World Cup Bot Commands
