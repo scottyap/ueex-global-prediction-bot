@@ -515,7 +515,7 @@ function parseMatchStartAtUtc(matchDate, matchTime, matchTimezone) {
   return new Date(localAsUtcMs - offsetMinutes * 60 * 1000);
 }
 
-function isBettingOpen(match) {
+function isVotingOpen(match) {
   return match.status === "open" && new Date(match.betting_end_at).getTime() > Date.now();
 }
 
@@ -880,7 +880,7 @@ function getTotalPool(totals) {
 
 function getBetNowUrl(matchCode) {
   if (!BOT_USERNAME) return null;
-  return `https://t.me/${BOT_USERNAME}?start=bet_${matchCode}`;
+  return `https://t.me/${BOT_USERNAME}?start=vote_${matchCode}`;
 }
 
 function getUserLang(ctxOrUserId = null) {
@@ -1042,7 +1042,7 @@ function buildRulesMessage(ctxOrLang = null) {
 4. 订单备注必须准确填写 Bot 显示的订单 ID。未填写备注或填写错误，将导致资金无法自动上账/确认。
 5. 如果转账低于订单金额，用户需继续补足剩余订单金额，累计到账达到订单金额后才可确认订单。
 6. 如果转账高于订单金额，系统仅按订单金额计入奖池，超出部分由 Admin 人工核对并补账/处理。
-7. 比赛开赛前 15 分钟停止下注。截止后到账的订单原则上不计入该场比赛。
+7. 比赛开赛前 15 分钟停止投票。截止后到账的订单原则上不计入该场比赛。
 8. 比赛结果录入后，猜中准确比分的用户将按已确认投票金额比例瓜分净奖池。
 9. 平台手续费：${feePercent}%，从每场总奖池中扣除。
 10. 所有比赛的奖池瓜分所得将在次日 1pm（UTC+4）前完成发放。
@@ -1056,7 +1056,7 @@ function buildRulesMessage(ctxOrLang = null) {
 4. You must enter the exact Order ID shown by the bot as the transfer remark. Missing or incorrect remarks will prevent funds from being credited/confirmed automatically.
 5. If your transfer is lower than the order amount, you must top up the remaining amount before the order can be confirmed.
 6. If your transfer is higher than the order amount, only the order amount will be counted into the prize pool. The excess amount will be manually reviewed and handled by Admin.
-7. Betting closes 15 minutes before kick-off. Payments received after the deadline may not be counted for that match.
+7. Voting closes 15 minutes before kick-off. Payments received after the deadline may not be counted for that match.
 8. After the match result is recorded, exact-score winners share the net prize pool according to their confirmed voting amount.
 9. Platform fee: ${feePercent}%, deducted from each match pool.
 10. Rewards from all match prize pools will be distributed by 1pm (UTC+4) on the following day.
@@ -1219,7 +1219,7 @@ function buildScoreKeyboard(match, outcome, ctxOrLang = null) {
 }
 
 function getStatusText(match, ctxOrLang = null) {
-  if (isBettingOpen(match)) return isZh(ctxOrLang) ? "开放中" : "Open";
+  if (isVotingOpen(match)) return isZh(ctxOrLang) ? "开放中" : "Open";
   if (match.status === "open") return isZh(ctxOrLang) ? "已关闭" : "Closed";
   return String(match.status || "").toUpperCase();
 }
@@ -1252,7 +1252,7 @@ function buildScoreMessage(match, totals, outcome, ctxOrLang = null) {
     return `🔸 比赛 ID: ${match.match_code}
 🔸 比赛: ${formatTeamWithFlag(match.team_a)} vs ${formatTeamWithFlag(match.team_b)}
 ${getMatchMetaLines(match, ctxOrLang)}🔸 状态: ${statusText}
-🔸 剩余下注时间: ${formatTimeLeft(match.betting_end_at)}
+🔸 剩余投票时间: ${formatTimeLeft(match.betting_end_at)}
 
 📍 选择类型: ${getOutcomeLabel(match, outcome, ctxOrLang)}
 📍 该类型奖池: ${formatAmount(outcomePool)} ${match.currency}
@@ -1265,7 +1265,7 @@ ${getMatchMetaLines(match, ctxOrLang)}🔸 状态: ${statusText}
   return `🔸 Match ID: ${match.match_code}
 🔸 Match: ${formatTeamWithFlag(match.team_a)} vs ${formatTeamWithFlag(match.team_b)}
 ${getMatchMetaLines(match, ctxOrLang)}🔸 Status: ${statusText}
-🔸 Betting Time Left: ${formatTimeLeft(match.betting_end_at)}
+🔸 Voting Time Left: ${formatTimeLeft(match.betting_end_at)}
 
 📍 Selection Type: ${getOutcomeLabel(match, outcome, ctxOrLang)}
 📍 Selection Pool: ${formatAmount(outcomePool)} ${match.currency}
@@ -1283,7 +1283,7 @@ function buildMatchMessage(match, totals, ctxOrLang = null) {
     return `🔸 比赛 ID: ${match.match_code}
 🔸 比赛: ${formatTeamWithFlag(match.team_a)} vs ${formatTeamWithFlag(match.team_b)}
 ${getMatchMetaLines(match, ctxOrLang)}🔸 状态: ${statusText}
-🔸 剩余下注时间: ${formatTimeLeft(match.betting_end_at)}
+🔸 剩余投票时间: ${formatTimeLeft(match.betting_end_at)}
 
 🎉总奖池: ${formatAmount(totalPool)} ${match.currency}`;
   }
@@ -1291,7 +1291,7 @@ ${getMatchMetaLines(match, ctxOrLang)}🔸 状态: ${statusText}
   return `🔸 Match ID: ${match.match_code}
 🔸 Match: ${formatTeamWithFlag(match.team_a)} vs ${formatTeamWithFlag(match.team_b)}
 ${getMatchMetaLines(match, ctxOrLang)}🔸 Status: ${statusText}
-🔸 Betting Time Left: ${formatTimeLeft(match.betting_end_at)}
+🔸 Voting Time Left: ${formatTimeLeft(match.betting_end_at)}
 
 🎉Total Pool: ${formatAmount(totalPool)} ${match.currency}`;
 }
@@ -1317,20 +1317,56 @@ function buildPhotoExtra(caption, keyboard = null, extraOptions = {}) {
   return extra;
 }
 
+function splitCaptionText(text, maxLength = TELEGRAM_CAPTION_SAFE_LIMIT) {
+  const safeText = String(text || "").trim();
+
+  if (safeText.length <= maxLength) {
+    return [safeText, ""];
+  }
+
+  let splitAt = safeText.lastIndexOf("\n\n", maxLength);
+
+  if (splitAt < Math.floor(maxLength * 0.45)) {
+    splitAt = safeText.lastIndexOf("\n", maxLength);
+  }
+
+  if (splitAt < Math.floor(maxLength * 0.45)) {
+    splitAt = maxLength;
+  }
+
+  const caption = safeText.slice(0, splitAt).trim();
+  const remaining = safeText.slice(splitAt).trim();
+
+  return [caption, remaining];
+}
+
 async function replyWithOptionalPhoto(ctx, imageUrl, text, keyboard = null, extraOptions = {}) {
   const safeText = String(text || "");
 
-  if (imageUrl && safeText.length <= TELEGRAM_CAPTION_SAFE_LIMIT) {
-    return ctx.replyWithPhoto(imageUrl, buildPhotoExtra(safeText, keyboard, extraOptions));
-  }
-
   if (imageUrl) {
+    const [caption, remainingText] = splitCaptionText(safeText);
     const photoExtra = { ...extraOptions };
-    if (keyboard?.reply_markup) {
+
+    if (caption) {
+      photoExtra.caption = caption;
+    }
+
+    if (!remainingText && keyboard?.reply_markup) {
       photoExtra.reply_markup = keyboard.reply_markup;
     }
 
-    await ctx.replyWithPhoto(imageUrl, photoExtra);
+    const photoMessage = await ctx.replyWithPhoto(imageUrl, photoExtra);
+
+    if (!remainingText) {
+      return photoMessage;
+    }
+
+    const options = { ...extraOptions };
+    if (keyboard?.reply_markup) {
+      options.reply_markup = keyboard.reply_markup;
+    }
+
+    return ctx.reply(remainingText, options);
   }
 
   const options = { ...extraOptions };
@@ -1344,17 +1380,30 @@ async function replyWithOptionalPhoto(ctx, imageUrl, text, keyboard = null, extr
 async function sendOptionalPhoto(chatId, imageUrl, text, keyboard = null, extraOptions = {}) {
   const safeText = String(text || "");
 
-  if (imageUrl && safeText.length <= TELEGRAM_CAPTION_SAFE_LIMIT) {
-    return bot.telegram.sendPhoto(chatId, imageUrl, buildPhotoExtra(safeText, keyboard, extraOptions));
-  }
-
   if (imageUrl) {
+    const [caption, remainingText] = splitCaptionText(safeText);
     const photoExtra = { ...extraOptions };
-    if (keyboard?.reply_markup) {
+
+    if (caption) {
+      photoExtra.caption = caption;
+    }
+
+    if (!remainingText && keyboard?.reply_markup) {
       photoExtra.reply_markup = keyboard.reply_markup;
     }
 
-    await bot.telegram.sendPhoto(chatId, imageUrl, photoExtra);
+    const photoMessage = await bot.telegram.sendPhoto(chatId, imageUrl, photoExtra);
+
+    if (!remainingText) {
+      return photoMessage;
+    }
+
+    const options = { ...extraOptions };
+    if (keyboard?.reply_markup) {
+      options.reply_markup = keyboard.reply_markup;
+    }
+
+    return bot.telegram.sendMessage(chatId, remainingText, options);
   }
 
   const options = { ...extraOptions };
@@ -2341,7 +2390,7 @@ async function autoVoidExpiredPendingOrders(matchInput) {
     .update({
       status: "voided",
       voided_at: now,
-      auto_confirm_error: "Auto-voided after betting time ended",
+      auto_confirm_error: "Auto-voided after voting time ended",
       updated_at: now
     })
     .in("order_code", orderCodes);
@@ -2369,14 +2418,14 @@ async function autoVoidExpiredPendingOrders(matchInput) {
 🔸 Order ID: ${order.order_code}
 🔸 Amount: ${formatAmount(order.expected_amount)} ${match.currency}
 
-This pending order was automatically voided because betting time ended before payment confirmation.`
+This pending order was automatically voided because voting time ended before payment confirmation.`
       );
     } catch (error) {
       console.error(`Failed to notify auto-voided order ${order.order_code}:`, error.message);
     }
   }
 
-  await notifyAdminGroup(`⏰ Auto-voided ${orders.length} pending order(s) after betting time ended.
+  await notifyAdminGroup(`⏰ Auto-voided ${orders.length} pending order(s) after voting time ended.
 
 Match: ${formatTeamWithFlag(match.team_a)} vs ${formatTeamWithFlag(match.team_b)}
 Match ID: ${match.match_code}
@@ -2429,7 +2478,7 @@ async function createMatch(ctx, text) {
 
   if (!match) {
     return ctx.reply(
-      "Invalid format.\nExample:\n/worldcup_NED_JPN_0:0_5:5_Others_2026.06.15_00:00_UTC+4_Group-F\n\nFormat:\n/worldcup_Team1_Team2_MinScore_MaxScore_Others_Date_Time_Timezone_Stage\n\nBetting automatically closes 15 minutes before match time."
+      "Invalid format.\nExample:\n/worldcup_NED_JPN_0:0_5:5_Others_2026.06.15_00:00_UTC+4_Group-F\n\nFormat:\n/worldcup_Team1_Team2_MinScore_MaxScore_Others_Date_Time_Timezone_Stage\n\nVoting automatically closes 15 minutes before match time."
     );
   }
 
@@ -2460,10 +2509,10 @@ async function createMatch(ctx, text) {
 
   const matchCode = await generateUniqueCode("WC", "wc_matches", "match_code");
   const now = new Date();
-  const bettingEndAt = new Date(matchStartAt.getTime() - 15 * 60 * 1000);
+  const votingEndAt = new Date(matchStartAt.getTime() - 15 * 60 * 1000);
 
-  if (bettingEndAt.getTime() <= now.getTime()) {
-    return ctx.reply("Invalid match time. Betting closes 15 minutes before the match, so the betting close time must be in the future.");
+  if (votingEndAt.getTime() <= now.getTime()) {
+    return ctx.reply("Invalid match time. Voting closes 15 minutes before the match, so the voting close time must be in the future.");
   }
 
   const payload = {
@@ -2481,7 +2530,7 @@ async function createMatch(ctx, text) {
     match_stage: matchStage,
     status: "open",
     betting_start_at: now.toISOString(),
-    betting_end_at: bettingEndAt.toISOString(),
+    betting_end_at: votingEndAt.toISOString(),
     created_by: ctx.from.id,
     updated_at: now.toISOString()
   };
@@ -2532,8 +2581,8 @@ Match ID: ${data.match_code}
 Match: ${formatTeamWithFlag(teamA)} vs ${formatTeamWithFlag(teamB)}
 Match Time: ${matchDate} ${matchTime} ${matchTimezone}
 Stage: ${matchStage}
-Betting closes: 15 minutes before match time
-Betting Time Left: ${formatTimeLeft(data.betting_end_at)}`);
+Voting closes: 15 minutes before match time
+Voting Time Left: ${formatTimeLeft(data.betting_end_at)}`);
 }
 
 async function showWorldCupEntry(ctx) {
@@ -2572,7 +2621,7 @@ async function showMatchDateSelection(ctx, edit = false) {
     await deleteLastPrivateMenuMessage(ctx, "matches");
   }
 
-  const matches = sortMatchesBySchedule((await getAllOpenMatches()).filter(isBettingOpen));
+  const matches = sortMatchesBySchedule((await getAllOpenMatches()).filter(isVotingOpen));
 
   if (!matches.length) {
     const message = isZh(ctx) ? "当前暂无开放中的世界杯预测比赛。" : "No open World Cup prediction matches are available now.";
@@ -2618,7 +2667,7 @@ Please select a match day:`;
 
 async function showMatchesForDate(ctx, dateKey, edit = false) {
   const matches = sortMatchesBySchedule(
-    (await getAllOpenMatches()).filter((match) => isBettingOpen(match) && getMatchDateKey(match) === dateKey)
+    (await getAllOpenMatches()).filter((match) => isVotingOpen(match) && getMatchDateKey(match) === dateKey)
   );
 
   if (!matches.length) {
@@ -2654,8 +2703,8 @@ async function startPrivateBet(ctx, matchCode) {
     return ctx.reply("Match not found.");
   }
 
-  if (!isBettingOpen(match)) {
-    return ctx.reply(isZh(ctx) ? "该比赛已停止下注。" : "Betting for this match is already closed.");
+  if (!isVotingOpen(match)) {
+    return ctx.reply(isZh(ctx) ? "该比赛已停止投票。" : "Voting for this match is already closed.");
   }
 
   const user = await getUserByTelegramId(ctx.from.id);
@@ -2770,9 +2819,9 @@ async function handleAmountInput(ctx, text, session) {
     return ctx.reply(isZh(ctx) ? "未找到比赛，请重新开始。" : "Match not found. Please start again with /worldcup.");
   }
 
-  if (!isBettingOpen(match)) {
+  if (!isVotingOpen(match)) {
     clearSession(ctx);
-    return ctx.reply(isZh(ctx) ? "该比赛已停止下注。" : "Betting for this match is already closed.");
+    return ctx.reply(isZh(ctx) ? "该比赛已停止投票。" : "Voting for this match is already closed.");
   }
 
   const userRecord = await getUserByTelegramId(ctx.from.id);
@@ -3045,7 +3094,7 @@ async function confirmOrderByCode(ctx, orderCode, amount, options = {}) {
 🔸 选择: ${formatSelectionWithFlags(matchData, order.selection)}
 🔸 确认金额: ${formatAmount(amount)} ${matchData.currency}
 
-📊 点击下方“比赛”可继续下注，或发送 /myvote 查看投票明细。`
+📊 点击下方“比赛”可继续投票，或发送 /myvote 查看投票明细。`
     : `⚽️ Match: ${formatTeamWithFlag(matchData.team_a)} vs ${formatTeamWithFlag(matchData.team_b)}
 
 🔸 Match ID: ${matchData.match_code}
@@ -3500,7 +3549,7 @@ function buildSettlementPreviewMessage(matchData, settlement) {
     const order = payout.order;
     const user = order.username ? `@${order.username}` : `UID ${order.ueex_uid}`;
 
-    return `${index + 1}. ${user} / UID ${order.ueex_uid} - Bet ${formatAmount(payout.winningAmount)} ${matchData.currency} - Payout ${formatAmount(payout.payoutAmount)} ${matchData.currency}`;
+    return `${index + 1}. ${user} / UID ${order.ueex_uid} - Vote ${formatAmount(payout.winningAmount)} ${matchData.currency} - Payout ${formatAmount(payout.payoutAmount)} ${matchData.currency}`;
   });
 
   return `🏆 Settlement Preview
@@ -4075,15 +4124,31 @@ async function showMyVote(ctx) {
   const body = isZh(ctx) ? `${lines.join("\n\n")}\n\n💰 总投票金额: ${formatAmount(totalVoteAmount)} ${currency}\n💎 总盈亏: ${totalPnlText}` : `${lines.join("\n\n")}\n\n💰 Total Vote Amount: ${formatAmount(totalVoteAmount)} ${currency}\n💎 Total PnL: ${totalPnlText}`;
 
   const sentMessages = [];
+  const imageUrl = getLocalizedImageUrl(ctx, MYVOTE_IMAGE_URL, MYVOTE_IMAGE_URL_ZH);
 
-  if (getLocalizedImageUrl(ctx, MYVOTE_IMAGE_URL, MYVOTE_IMAGE_URL_ZH)) {
-    const photo = await ctx.replyWithPhoto(getLocalizedImageUrl(ctx, MYVOTE_IMAGE_URL, MYVOTE_IMAGE_URL_ZH), getPrivateMainMenu(ctx));
+  if (imageUrl) {
+    const [caption, remainingText] = splitCaptionText(body);
+    const photo = await ctx.replyWithPhoto(
+      imageUrl,
+      buildPhotoExtra(caption, remainingText ? null : getPrivateMainMenu(ctx))
+    );
     sentMessages.push(photo);
+
+    if (remainingText) {
+      const chunks = splitLongMessage(remainingText, 3500);
+      for (let i = 0; i < chunks.length; i += 1) {
+        const options = i === chunks.length - 1 ? getPrivateMainMenu(ctx) : undefined;
+        const sent = await ctx.reply(chunks[i], options);
+        sentMessages.push(sent);
+      }
+    }
+
+    return rememberPrivateMenuMessages(ctx, sentMessages, "myvote");
   }
 
   const chunks = splitLongMessage(body, 3500);
   for (let i = 0; i < chunks.length; i += 1) {
-    const options = i === chunks.length - 1 ? getPrivateMainMenu() : undefined;
+    const options = i === chunks.length - 1 ? getPrivateMainMenu(ctx) : undefined;
     const sent = await ctx.reply(chunks[i], options);
     sentMessages.push(sent);
   }
@@ -4362,7 +4427,7 @@ If your transfer is lower than the order amount, you must top up the remaining a
 If your transfer is higher than the order amount, only the order amount will be counted into the prize pool. The excess amount will be manually reviewed and handled by Admin.
 
 • Late payment:
-Betting closes 15 minutes before kick-off. Payments received after the deadline may not be counted for that match.
+Voting closes 15 minutes before kick-off. Payments received after the deadline may not be counted for that match.
 
 Prize Pool
 
@@ -4499,8 +4564,8 @@ bot.start(async (ctx) => {
   const text = getMessageText(ctx);
   const payload = text.split(/\s+/)[1] || "";
 
-  if (payload.startsWith("bet_")) {
-    const matchCode = payload.replace(/^bet_/i, "").toUpperCase();
+  if (payload.startsWith("vote_") || payload.startsWith("bet_")) {
+    const matchCode = payload.replace(/^(vote_|bet_)/i, "").toUpperCase();
 
     if (!hasSelectedLanguage(ctx)) {
       return showLanguageSelection(ctx, matchCode);
@@ -4702,7 +4767,7 @@ bot.on("callback_query", async (ctx) => {
       if (!isPrivateChat(ctx)) {
         const url = getBetNowUrl(matchCode);
         return ctx.answerCbQuery(
-          url ? "Please tap Bet Now to open private chat with the bot." : "Please set BOT_USERNAME in Render to enable private betting.",
+          url ? "Please tap Vote Now to open private chat with the bot." : "Please set BOT_USERNAME in Render to enable private voting.",
           { show_alert: true }
         );
       }
@@ -4760,8 +4825,8 @@ bot.on("callback_query", async (ctx) => {
         return ctx.answerCbQuery("Match not found.", { show_alert: true });
       }
 
-      if (!isBettingOpen(match)) {
-        return ctx.answerCbQuery("Betting for this match is already closed.", { show_alert: true });
+      if (!isVotingOpen(match)) {
+        return ctx.answerCbQuery("Voting for this match is already closed.", { show_alert: true });
       }
 
       const user = await getUserByTelegramId(ctx.from.id);
