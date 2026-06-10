@@ -1050,18 +1050,18 @@ function buildRulesMessage(ctxOrLang = null) {
 12. UEEx 保留对异常行为、无效付款、补账、退款及最终奖励资格进行审核的权利。`;
   }
 
-  return `1. Tap Matches and select a match day, match, prediction type, exact score, and UE voting amount.
+  return `1. Tap Matches, select a match, prediction, exact score, and UE voting amount.
 2. Minimum voting amount: ${formatAmount(MIN_BET_AMOUNT)} UE.
-3. After creating a pending order, transfer the required UE amount to the BSC address ${TRANSFER_ADDRESS}.
-4. Enter the exact Order ID as the transfer remark. Missing or incorrect remarks may delay or prevent automatic confirmation.
-5. If the transfer amount is lower than the order amount, the remaining balance must be topped up before confirmation.
-6. If the transfer amount is higher, only the order amount will count toward the prize pool. Any excess will be reviewed by Admin.
-7. Voting closes 15 minutes before kick-off. Late payments may not be counted.
-8. After the result is recorded, exact-score winners will share the net prize pool based on their confirmed voting amount.
-9. Platform fee: ${feePercent}%, deducted from each match pool.
+3. After creating an order, transfer UE to: ${TRANSFER_ADDRESS}.
+4. Enter the exact Order ID as the transfer remark. Wrong or missing remarks may prevent confirmation.
+5. Underpaid orders require a top-up before confirmation.
+6. Overpaid orders count only the order amount. Extra funds will be reviewed by Admin.
+7. Voting closes 15 minutes before kick-off. Late payments may not count.
+8. Exact-score winners share the net prize pool by confirmed voting amount.
+9. Platform fee: ${feePercent}% per match pool.
 10. Rewards will be distributed by 1pm (UTC+4) the next day.
-11. If a match is postponed, cancelled, abandoned, or handled abnormally, Admin may cancel it and publish the participant/refund list. Final refunds are subject to review.
-12. UEEx reserves the right to review abnormal activity, invalid payments, top-ups, refunds, and reward eligibility.`;
+11. If a match is postponed, cancelled, or abnormal, Admin may cancel it and publish the refund list.
+12. UEEx reserves the right to review abnormal payments, refunds, and reward eligibility.`;
 }
 
 async function showRules(ctx) {
