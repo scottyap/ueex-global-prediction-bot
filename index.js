@@ -1036,32 +1036,32 @@ function buildRulesMessage(ctxOrLang = null) {
   const feePercent = formatAmount(new Decimal(PLATFORM_FEE_BPS).div(100));
 
   if (isZh(ctxOrLang)) {
-    return `1. 点击“比赛”，选择比赛、预测方向、准确比分和 UE 投票金额。
+    return `1. 点击“比赛”，选择比赛日期、比赛、预测方向、准确比分和 UE 投票金额。
 2. 最低投票金额：${formatAmount(MIN_BET_AMOUNT)} UE。
-3. 按 Bot 显示金额转账至：${TRANSFER_ADDRESS}。
-4. 转账备注必须准确填写订单 ID，错误或缺失可能导致无法确认。
-5. 少转订单需补足后才可确认。
-6. 多转订单仅按订单金额计入奖池，超出部分由 Admin 人工处理。
-7. 比赛开赛前 15 分钟停止投票，逾期到账可能不计入。
-8. 猜中准确比分的用户按已确认投票金额比例瓜分净奖池。
-9. 平台手续费：${feePercent}%，从每场奖池中扣除。
-10. 奖励将在次日 1pm（UTC+4）前完成发放。
-11. 赛事取消或异常时，退款以 Admin/财务复核为准。
-12. UEEx 保留对付款、退款及奖励资格的最终审核权。`;
+3. 创建待支付订单后，请将对应 UE 金额转账至 BSC 地址：${TRANSFER_ADDRESS}。
+4. 订单备注必须准确填写 Bot 显示的订单 ID。未填写备注或填写错误，将导致资金无法自动上账/确认。
+5. 如果转账低于订单金额，用户需继续补足剩余订单金额，累计到账达到订单金额后才可确认订单。
+6. 如果转账高于订单金额，系统仅按订单金额计入奖池，超出部分由 Admin 人工核对并补账/处理。
+7. 比赛开赛前 15 分钟停止投票。截止后到账的订单原则上不计入该场比赛。
+8. 比赛结果录入后，猜中准确比分的用户将按已确认投票金额比例瓜分净奖池。
+9. 平台手续费：${feePercent}%，从每场总奖池中扣除。
+10. 所有比赛的奖池瓜分所得将在次日 1pm（UTC+4）前完成发放。
+11. 如赛事延期、取消或赛果异常，Admin 将取消该场赛事并公布参与者及退款金额；实际退款以 Admin/财务复核为准。
+12. UEEx 保留对异常行为、无效付款、补账、退款及最终奖励资格进行审核的权利。`;
   }
 
-  return `1. Tap Matches and choose a match, prediction, exact score, and UE amount.
+  return `1. Tap Matches and select a match day, match, prediction type, exact score, and UE voting amount.
 2. Minimum voting amount: ${formatAmount(MIN_BET_AMOUNT)} UE.
-3. Transfer the required UE amount to: ${TRANSFER_ADDRESS}.
-4. Enter the exact Order ID as the transfer remark. Wrong or missing remarks may prevent confirmation.
-5. Underpaid orders require a top-up before confirmation.
-6. Overpaid orders count only the order amount; extra funds are reviewed by Admin.
-7. Voting closes 15 minutes before kick-off. Late payments may not count.
-8. Exact-score winners share the net prize pool by confirmed voting amount.
-9. Platform fee: ${feePercent}% per match pool.
-10. Rewards will be distributed by 1pm (UTC+4) the next day.
-11. Cancelled or abnormal matches may be refunded after Admin/Finance review.
-12. UEEx reserves the right to review payments, refunds, and reward eligibility.`;
+3. After creating a pending order, transfer the required UE amount to the BSC address ${TRANSFER_ADDRESS}.
+4. You must enter the exact Order ID shown by the bot as the transfer remark. Missing or incorrect remarks will prevent funds from being credited/confirmed automatically.
+5. If your transfer is lower than the order amount, you must top up the remaining amount before the order can be confirmed.
+6. If your transfer is higher than the order amount, only the order amount will be counted into the prize pool. The excess amount will be manually reviewed and handled by Admin.
+7. Voting closes 15 minutes before kick-off. Payments received after the deadline may not be counted for that match.
+8. After the match result is recorded, exact-score winners share the net prize pool according to their confirmed voting amount.
+9. Platform fee: ${feePercent}%, deducted from each match pool.
+10. Rewards from all match prize pools will be distributed by 1pm (UTC+4) on the following day.
+11. If a match is postponed, cancelled, abandoned, or has abnormal result handling, Admin will cancel the match and publish the participant/refund list. Final refunds are subject to Admin/Finance review.
+12. UEEx reserves the right to review abnormal activity, invalid payments, top-ups, refunds, and final reward eligibility.`;
 }
 
 async function showRules(ctx) {
@@ -1077,64 +1077,68 @@ function buildHowToPlayMessage(ctxOrLang = null) {
   const feePercent = formatAmount(new Decimal(PLATFORM_FEE_BPS).div(100));
 
   if (isZh(ctxOrLang)) {
-    return `📌 如何参与
+    return `🎮 玩法说明
 
-1. 点击“比赛”，选择比赛、方向、比分和 UE 金额。
-2. 按 Bot 显示金额转账至官方地址。
-3. 转账备注必须填写正确订单 ID。
-4. 付款确认后，订单才会计入奖池。
+如何参与：
+1. 点击“比赛”。
+2. 选择比赛日期和比赛。
+3. 选择胜平负方向。
+4. 选择准确比分。
+5. 输入参与金额。
+6. 按 Bot 显示的金额转账至官方收款地址。
+7. 转账备注必须准确填写订单 ID。
+8. 付款确认后，该订单才会计入奖池。
 
-🏆 奖池规则
-
+如何瓜分奖池：
 • 每场比赛独立奖池。
-• 平台收取 ${feePercent}% 手续费。
+• 平台从总奖池收取 ${feePercent}% 手续费。
 • 扣除手续费后为净奖池。
-• 猜中准确比分的用户，按已确认投票金额比例瓜分净奖池。
+• 猜中准确比分的用户，按照各自已确认投票金额占中奖池的比例瓜分净奖池。
 
-📝 示例
-
+示例：
 总奖池：10,000 UE
-手续费：${feePercent}%
+平台手续费：${feePercent}%
 净奖池：9,500 UE
 
-如果中奖池为 5,000 UE，你投入 1,000 UE，即占 20%，预计获得净奖池的 20%。
+如果准确比分中奖池为 5,000 UE，你投入 1,000 UE，占中奖池 20%，则预计获得净奖池 20%。
 
-⚠️ 重要提醒
-
-• 订单备注必须正确。
+重要提醒：
+• 必须填写正确订单备注。
 • 少转需补足后才可确认。
-• 多转仅按订单金额计入奖池，超出部分由 Admin 人工处理。
-• 奖励将在次日 1pm（UTC+4）前发放。`;
+• 多转只按订单金额计入奖池，超出部分由 Admin 人工处理。
+• 奖池瓜分所得将在次日 1pm（UTC+4）前完成发放。`;
   }
 
-  return `📌 How to Join
+  return `🎮 How to Play
 
-1. Tap Matches and choose a match, prediction, exact score, and UE amount.
-2. Transfer the amount shown by the bot to the official address.
-3. Enter the correct Order ID as the transfer remark.
-4. Your order counts only after payment confirmation.
+How to join:
+1. Tap Matches.
+2. Select a match day and match.
+3. Select Win / Draw / Win.
+4. Select the exact score.
+5. Enter your UE amount.
+6. Transfer the amount shown by the bot to the official receiving address.
+7. Enter the exact Order ID as the transfer remark.
+8. Your order is counted into the pool only after payment confirmation.
 
-🏆 Prize Pool
-
-• Each match has its own prize pool.
-• UEEx charges a ${feePercent}% platform fee.
+How the prize pool is shared:
+• Each match has an independent prize pool.
+• UEEx charges a ${feePercent}% platform fee from the total pool.
 • The remaining amount is the net prize pool.
-• Exact-score winners share the net prize pool by confirmed voting amount.
+• Exact-score winners share the net prize pool proportionally based on their confirmed voting amount.
 
-📝 Example
-
+Example:
 Total pool: 10,000 UE
 Platform fee: ${feePercent}%
 Net pool: 9,500 UE
 
-If the winning-score pool is 5,000 UE and your confirmed vote is 1,000 UE, you receive about 20% of the net prize pool.
+If the exact-score winning pool is 5,000 UE and your confirmed vote is 1,000 UE, you own 20% of the winning pool and receive around 20% of the net pool.
 
-⚠️ Important
-
-• Correct Order ID remark is required.
-• Underpaid orders need a top-up.
-• Overpaid orders count only the order amount; extra funds are handled by Admin.
-• Rewards will be distributed by 1pm (UTC+4) the next day.`;
+Important:
+• You must enter the correct Order ID as the transfer remark.
+• Underpayments must be topped up before confirmation.
+• Overpayments count only the order amount into the prize pool; the excess amount is handled manually by Admin.
+• Rewards will be distributed by 1pm (UTC+4) on the following day.`;
 }
 
 async function showHowToPlay(ctx) {
@@ -1409,7 +1413,7 @@ async function sendOptionalPhoto(chatId, imageUrl, text, keyboard = null, extraO
 
   return bot.telegram.sendMessage(chatId, safeText, options);
 }
-async function notifyPublicWorldCupTopic(text, imageUrl = "") {
+async function notifyPublicWorldCupTopic(text, imageUrl = "", keyboard = null) {
   if (!PUBLIC_GROUP_CHAT_ID) return null;
 
   const topicOptions = PUBLIC_WORLD_CUP_TOPIC_ID
@@ -1417,7 +1421,7 @@ async function notifyPublicWorldCupTopic(text, imageUrl = "") {
     : {};
 
   try {
-    return await sendOptionalPhoto(PUBLIC_GROUP_CHAT_ID, imageUrl, text, null, topicOptions);
+    return await sendOptionalPhoto(PUBLIC_GROUP_CHAT_ID, imageUrl, text, keyboard, topicOptions);
   } catch (error) {
     console.error("Failed to notify public World Cup topic:", error.message);
     return null;
@@ -2968,8 +2972,10 @@ async function handleAmountInput(ctx, text, session) {
 🔸 Amount: ${formatAmount(amount)} ${match.currency}
 🔸 Remark: ${data.order_code}
 
-Confirm:
+Confirm step 1:
 /confirm_${data.order_code}_${formatAmountForCommand(amount)}
+
+Then reply with recharge order number / exchange_id
 
 Void:
 /void_${data.order_code}`);
@@ -3178,13 +3184,114 @@ async function confirmOrderByCode(ctx, orderCode, amount, options = {}) {
 🔸 Amount: ${formatAmount(amount)} ${matchData.currency}
 🔸 User: ${getTelegramUserLabel(order)}
 
-🎉Total Pool: ${formatAmount(getTotalPool(updatedTotals))} ${matchData.currency}`, ORDER_CONFIRMED_IMAGE_URL);
+🎉Total Pool: ${formatAmount(getTotalPool(updatedTotals))} ${matchData.currency}`, ORDER_CONFIRMED_IMAGE_URL, buildPublicOrderConfirmedKeyboard());
 
   return ctx.reply(`✅ Order confirmed: ${orderCode}
 UID: ${order.ueex_uid}
 Amount: ${formatAmount(amount)} ${matchData.currency}
 User notified: ${userNotified ? "yes" : "no"}`);
 }
+
+async function isManualRechargeOrderIdUsed(rechargeOrderId, currentOrderCode = "") {
+  const value = String(rechargeOrderId || "").trim();
+
+  if (!value) return false;
+
+  const { data: usedOrder, error: orderError } = await supabase
+    .from("wc_orders")
+    .select("order_code")
+    .eq("payment_exchange_id", value)
+    .neq("order_code", String(currentOrderCode || "").toUpperCase())
+    .maybeSingle();
+
+  if (orderError) {
+    console.error("Check manual recharge order id in wc_orders error:", orderError.message);
+  }
+
+  if (usedOrder?.order_code) return true;
+
+  const { data: usedPayment, error: paymentError } = await supabase
+    .from("wc_payment_records")
+    .select("matched_order_code")
+    .eq("exchange_id", value)
+    .maybeSingle();
+
+  if (paymentError) {
+    console.error("Check manual recharge order id in wc_payment_records error:", paymentError.message);
+  }
+
+  return Boolean(usedPayment?.matched_order_code);
+}
+
+function isValidRechargeOrderId(value) {
+  return /^[A-Za-z0-9_-]{3,80}$/.test(String(value || "").trim());
+}
+
+async function promptManualConfirmRechargeId(ctx, orderCode, amount) {
+  const { data: order, error: orderError } = await supabase
+    .from("wc_orders")
+    .select("*")
+    .eq("order_code", orderCode)
+    .maybeSingle();
+
+  if (orderError || !order) {
+    return ctx.reply("Order not found.");
+  }
+
+  if (order.status !== "pending") {
+    return ctx.reply(`Order ${orderCode} is not pending. Current status: ${order.status}`);
+  }
+
+  setSession(ctx, {
+    step: "awaiting_admin_confirm_recharge_id",
+    orderCode,
+    amount: amount.toFixed()
+  });
+
+  return ctx.reply(
+    `Step 2 required before confirmation.
+
+Order ID: ${orderCode}
+Amount: ${formatAmount(amount)} ${order.currency || DEFAULT_CURRENCY}
+User UID: ${order.ueex_uid}
+
+Please reply with the UEEx recharge order number / exchange_id for this payment.
+To cancel this confirmation flow, send /cancel_confirm.`,
+    {
+      reply_markup: {
+        force_reply: true,
+        selective: true
+      }
+    }
+  );
+}
+
+async function handleAdminConfirmRechargeId(ctx, session, text) {
+  if (!(await requireAdminControlChat(ctx))) return;
+
+  const rechargeOrderId = String(text || "").trim();
+
+  if (!isValidRechargeOrderId(rechargeOrderId)) {
+    return ctx.reply("Invalid recharge order number. Please enter 3-80 characters using letters, numbers, _ or - only. Or send /cancel_confirm.");
+  }
+
+  const alreadyUsed = await isManualRechargeOrderIdUsed(rechargeOrderId, session.orderCode);
+
+  if (alreadyUsed) {
+    return ctx.reply("This recharge order number / exchange_id has already been used. Please check and enter another one, or send /cancel_confirm.");
+  }
+
+  clearSession(ctx);
+
+  return confirmOrderByCode(ctx, session.orderCode, new Decimal(session.amount), {
+    autoConfirmed: false,
+    paymentRecord: {
+      exchangeId: rechargeOrderId,
+      remark: session.orderCode
+    }
+  });
+}
+
 
 async function confirmOrder(ctx, text) {
   if (!(await requireAdmin(ctx))) return;
@@ -3203,7 +3310,7 @@ async function confirmOrder(ctx, text) {
     return ctx.reply("Invalid amount.");
   }
 
-  return confirmOrderByCode(ctx, orderCode, amount);
+  return promptManualConfirmRechargeId(ctx, orderCode, amount);
 }
 
 async function mockPayOrder(ctx, text) {
@@ -4241,7 +4348,8 @@ UID: ${order.ueex_uid}
 TG: ${getTelegramUserLabel(order)}
 Selection: ${selection}
 Amount: ${formatAmount(order.expected_amount)} ${order.currency}
-Confirm: /confirm_${order.order_code}_${formatAmountForCommand(order.expected_amount)}`;
+Confirm step 1: /confirm_${order.order_code}_${formatAmountForCommand(order.expected_amount)}
+Then reply with recharge order number / exchange_id`;
   });
 
   return ctx.reply(`🧾 Pending Orders${matchCode ? ` | ${String(matchCode).toUpperCase()}` : ""}
@@ -4431,6 +4539,16 @@ function buildTopicRulesKeyboard() {
   ]);
 }
 
+function buildPublicOrderConfirmedKeyboard() {
+  const url = getStartPredictionUrl();
+
+  if (!url) return undefined;
+
+  return Markup.inlineKeyboard([
+    [Markup.button.url("⚽ Start Prediction", url)]
+  ]);
+}
+
 function buildTopicRulesMessage() {
   return `🏆 UEEx World Cup Prediction Event
 
@@ -4523,7 +4641,8 @@ User:
 
 Admin:
 /worldcup_MEX_ZAF_7:7:51_0:0_5:5_Others_2026.06.11_23:00_UTC+4_Group - Create match and post it to World Cup topic
-/confirm_O000123_1150 - Confirm payment
+/confirm_O000123_1150 - Start manual confirmation, then reply with recharge order number / exchange_id
+/cancel_confirm - Cancel pending manual confirmation flow
 /mockpay_O000123_1150 - Mock auto payment test
 /paycheck - Manually check pending payments from UEEx API
 /paycheck_debug - Show payment API debug summary
@@ -4984,6 +5103,15 @@ bot.on("message", async (ctx) => {
       return showPendingOrders(ctx, pendingMatch?.[1] || null);
     }
 
+    if (/^\/cancel_confirm$/i.test(cleaned)) {
+      const session = getSession(ctx);
+      if (session?.step === "awaiting_admin_confirm_recharge_id") {
+        clearSession(ctx);
+        return ctx.reply("Manual confirmation flow cancelled.");
+      }
+      return ctx.reply("No manual confirmation flow to cancel.");
+    }
+
     if (isPrivateChat(ctx) && /^\/language$/i.test(cleaned)) {
       return showLanguageSelection(ctx);
     }
@@ -5063,6 +5191,10 @@ bot.on("message", async (ctx) => {
     const session = getSession(ctx);
 
     if (!session) return;
+
+    if (session.step === "awaiting_admin_confirm_recharge_id") {
+      return handleAdminConfirmRechargeId(ctx, session, text);
+    }
 
     if (session.step === "awaiting_uid") {
       const uid = String(text || "").trim();
