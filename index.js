@@ -1053,15 +1053,15 @@ function buildRulesMessage(ctxOrLang = null) {
   return `1. Tap Matches and select a match day, match, prediction type, exact score, and UE voting amount.
 2. Minimum voting amount: ${formatAmount(MIN_BET_AMOUNT)} UE.
 3. After creating a pending order, transfer the required UE amount to the BSC address ${TRANSFER_ADDRESS}.
-4. You must enter the exact Order ID shown by the bot as the transfer remark. Missing or incorrect remarks will prevent funds from being credited/confirmed automatically.
-5. If your transfer is lower than the order amount, you must top up the remaining amount before the order can be confirmed.
-6. If your transfer is higher than the order amount, only the order amount will be counted into the prize pool. The excess amount will be manually reviewed and handled by Admin.
-7. Voting closes 15 minutes before kick-off. Payments received after the deadline may not be counted for that match.
-8. After the match result is recorded, exact-score winners share the net prize pool according to their confirmed voting amount.
+4. Enter the exact Order ID as the transfer remark. Missing or incorrect remarks may delay or prevent automatic confirmation.
+5. If the transfer amount is lower than the order amount, the remaining balance must be topped up before confirmation.
+6. If the transfer amount is higher, only the order amount will count toward the prize pool. Any excess will be reviewed by Admin.
+7. Voting closes 15 minutes before kick-off. Late payments may not be counted.
+8. After the result is recorded, exact-score winners will share the net prize pool based on their confirmed voting amount.
 9. Platform fee: ${feePercent}%, deducted from each match pool.
-10. Rewards from all match prize pools will be distributed by 1pm (UTC+4) on the following day.
-11. If a match is postponed, cancelled, abandoned, or has abnormal result handling, Admin will cancel the match and publish the participant/refund list. Final refunds are subject to Admin/Finance review.
-12. UEEx reserves the right to review abnormal activity, invalid payments, top-ups, refunds, and final reward eligibility.`;
+10. Rewards will be distributed by 1pm (UTC+4) the next day.
+11. If a match is postponed, cancelled, abandoned, or handled abnormally, Admin may cancel it and publish the participant/refund list. Final refunds are subject to review.
+12. UEEx reserves the right to review abnormal activity, invalid payments, top-ups, refunds, and reward eligibility.`;
 }
 
 async function showRules(ctx) {
@@ -1077,64 +1077,54 @@ function buildHowToPlayMessage(ctxOrLang = null) {
   const feePercent = formatAmount(new Decimal(PLATFORM_FEE_BPS).div(100));
 
   if (isZh(ctxOrLang)) {
-    return `🎮 玩法说明
+    return `📌 如何参与：
+1. 点击“比赛”，选择比赛日期和比赛，并选择预测方向
+2. 选择准确比分，然后输入参与金额
+3. 按 Bot 显示的金额转账至官方收款地址
+4. 转账备注必须准确填写订单 ID
+5. 付款确认后，该订单才会计入奖池
 
-如何参与：
-1. 点击“比赛”。
-2. 选择比赛日期和比赛。
-3. 选择胜平负方向。
-4. 选择准确比分。
-5. 输入参与金额。
-6. 按 Bot 显示的金额转账至官方收款地址。
-7. 转账备注必须准确填写订单 ID。
-8. 付款确认后，该订单才会计入奖池。
+❓ 如何瓜分奖池：
+• 每场比赛独立奖池
+• 平台从总奖池收取 ${feePercent}% 手续费
+• 扣除手续费后为净奖池
+• 猜中准确比分的用户，按照各自已确认投票金额占中奖池的比例瓜分净奖池
 
-如何瓜分奖池：
-• 每场比赛独立奖池。
-• 平台从总奖池收取 ${feePercent}% 手续费。
-• 扣除手续费后为净奖池。
-• 猜中准确比分的用户，按照各自已确认投票金额占中奖池的比例瓜分净奖池。
+📝 示例：
+• 总奖池：10,000 UE
+• 平台手续费：${feePercent}%
+• 净奖池：9,500 UE
 
-示例：
-总奖池：10,000 UE
-平台手续费：${feePercent}%
-净奖池：9,500 UE
+如果准确比分中奖池为 5,000 UE，你投入 1,000 UE，占中奖池 20%，则预计获得净奖池 20%
 
-如果准确比分中奖池为 5,000 UE，你投入 1,000 UE，占中奖池 20%，则预计获得净奖池 20%。
-
-重要提醒：
-• 必须填写正确订单备注。
-• 少转需补足后才可确认。
-• 多转只按订单金额计入奖池，超出部分由 Admin 人工处理。
-• 奖池瓜分所得将在次日 1pm（UTC+4）前完成发放。`;
+⚠️ 重要提醒：
+• 必须填写正确订单备注
+• 少转需补足后才可确认
+• 多转只按订单金额计入奖池，超出部分由 Admin 人工处理
+• 奖池瓜分所得将在次日 1pm（UTC+4）前完成发放`;
   }
 
-  return `🎮 How to Play
+  return `📌 How to join:
+1. Tap Matches, select a match day, match & predicting direction.
+2. Select the exact score and enter your UE amount.
+3. Transfer the amount shown by the bot to the official receiving address.
+4. Enter the exact Order ID as the transfer remark.
+5. Your order is counted into the pool only after payment confirmation.
 
-How to join:
-1. Tap Matches.
-2. Select a match day and match.
-3. Select Win / Draw / Win.
-4. Select the exact score.
-5. Enter your UE amount.
-6. Transfer the amount shown by the bot to the official receiving address.
-7. Enter the exact Order ID as the transfer remark.
-8. Your order is counted into the pool only after payment confirmation.
-
-How the prize pool is shared:
+❓ How the prize pool is shared:
 • Each match has an independent prize pool.
 • UEEx charges a ${feePercent}% platform fee from the total pool.
 • The remaining amount is the net prize pool.
 • Exact-score winners share the net prize pool proportionally based on their confirmed voting amount.
 
-Example:
-Total pool: 10,000 UE
-Platform fee: ${feePercent}%
-Net pool: 9,500 UE
+📝 Example:
+• Total pool: 10,000 UE
+• Platform fee: ${feePercent}%
+• Net pool: 9,500 UE
 
-If the exact-score winning pool is 5,000 UE and your confirmed vote is 1,000 UE, you own 20% of the winning pool and receive around 20% of the net pool.
+If the exact-score winning pool is 5,000 UE and your confirmed vote is 1,000 UE, you hold 20% and receive about 20% of the net prize pool.
 
-Important:
+⚠️ Important:
 • You must enter the correct Order ID as the transfer remark.
 • Underpayments must be topped up before confirmation.
 • Overpayments count only the order amount into the prize pool; the excess amount is handled manually by Admin.
