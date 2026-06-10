@@ -1112,11 +1112,13 @@ function buildHowToPlayMessage(ctxOrLang = null) {
 4. Your order counts only after payment confirmation.
 
 ❓ Prize pool sharing:
+
 • Each match has its own prize pool.
 • UEEx charges a ${feePercent}% platform fee.
 • Exact-score winners share the net prize pool by confirmed voting amount.
 
 📝 Example:
+
 • Total pool: 10,000 UE
 • Platform fee: ${feePercent}%
 • Net pool: 9,500 UE
@@ -1124,6 +1126,7 @@ function buildHowToPlayMessage(ctxOrLang = null) {
 If the winning-score pool is 5,000 UE and your confirmed vote is 1,000 UE, you receive about 20% of the net prize pool.
 
 ⚠️ Important:
+
 • Correct Order ID remark is required.
 • Underpaid orders need a top-up.
 • Overpaid orders count only the order amount; extra funds are reviewed by Admin.
