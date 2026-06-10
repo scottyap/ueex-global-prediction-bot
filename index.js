@@ -77,6 +77,10 @@ const SUPPORT_IMAGE_URL =
 const MYVOTE_IMAGE_URL =
   process.env.MYVOTE_IMAGE_URL ||
   "https://i.ibb.co/C3MxB9zh/Chat-GPT-Image-Jun-5-2026-10-48-46-AM-3.png";
+const HOW_TO_PLAY_IMAGE_URL = process.env.HOW_TO_PLAY_IMAGE_URL || "https://ibb.co/BVxnssjY";
+const HOW_TO_PLAY_IMAGE_URL_ZH = process.env.HOW_TO_PLAY_IMAGE_URL_ZH || "https://ibb.co/C5MwfqPx";
+const MATCH_CANCELLED_IMAGE_URL = process.env.MATCH_CANCELLED_IMAGE_URL || "https://ibb.co/SXLC5H0N";
+const MATCH_CANCELLED_IMAGE_URL_ZH = process.env.MATCH_CANCELLED_IMAGE_URL_ZH || "https://ibb.co/mgdxZ4R";
 const WINNER_IMAGE_URL =
   process.env.WINNER_IMAGE_URL ||
   "https://i.ibb.co/nqpCFgCQ/Chat-GPT-Image-Jun-5-2026-06-06-09-PM-2.png";
@@ -1144,7 +1148,7 @@ async function showHowToPlay(ctx) {
 
   const sent = await replyWithOptionalPhoto(
     ctx,
-    getLocalizedImageUrl(ctx, WORLDCUP_IMAGE_URL, WORLDCUP_IMAGE_URL_ZH),
+    getLocalizedImageUrl(ctx, HOW_TO_PLAY_IMAGE_URL, HOW_TO_PLAY_IMAGE_URL_ZH),
     buildHowToPlayMessage(ctx),
     getPrivateMainMenu(ctx)
   );
@@ -3878,7 +3882,7 @@ async function settleMatch(ctx, text) {
   const adminMessage = buildSettlementCompletedAdminMessage(matchData, settlement);
   const publicMessage = buildSettlementPublicMessage(matchData, settlement);
 
-  const publicNotifyResult = await notifyPublicWorldCupTopicLong(publicMessage, MATCH_SETTLED_IMAGE_URL);
+  const publicNotifyResult = await notifyPublicWorldCupTopicLong(publicMessage, MATCH_CANCELLED_IMAGE_URL);
   const adminFinalMessage = `${adminMessage}
 
 Public Topic Notification: ${publicNotifyResult ? "sent" : "failed or not configured"}`;
@@ -4268,7 +4272,7 @@ async function cancelMatch(ctx, text) {
   const publicMessage = buildPublicCancellationMessage(matchData, orders);
   const adminMessage = buildAdminCancellationMessage(matchData, orders);
 
-  const publicNotifyResult = await notifyPublicWorldCupTopicLong(publicMessage, MATCH_SETTLED_IMAGE_URL);
+  const publicNotifyResult = await notifyPublicWorldCupTopicLong(publicMessage, MATCH_CANCELLED_IMAGE_URL);
   await replyLongMessage(ctx, `${adminMessage}
 
 Public Topic Notification: ${publicNotifyResult ? "sent" : "failed or not configured"}
@@ -4293,7 +4297,11 @@ Refund Amount: ${formatAmount(order.confirmed_amount || order.expected_amount)} 
 
 Admin will manually review and arrange the refund.`;
 
-      await bot.telegram.sendMessage(order.telegram_id, userMessage);
+      await sendOptionalPhoto(
+        order.telegram_id,
+        getLocalizedImageUrl(order.telegram_id, MATCH_CANCELLED_IMAGE_URL, MATCH_CANCELLED_IMAGE_URL_ZH),
+        userMessage
+      );
     } catch (error) {
       console.error(`Failed to notify cancelled match user ${order.telegram_id}:`, error.message);
     }
