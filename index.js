@@ -109,6 +109,12 @@ const ADMIN_GROUP_CHAT_ID = process.env.ADMIN_GROUP_CHAT_ID || "";
 const PUBLIC_GROUP_CHAT_ID = process.env.PUBLIC_GROUP_CHAT_ID || process.env.PUBLIC_CHAT_ID || "";
 const PUBLIC_WORLD_CUP_TOPIC_ID = process.env.PUBLIC_WORLD_CUP_TOPIC_ID || process.env.WORLD_CUP_TOPIC_ID || "";
 
+// v50: If a settled match has no exact-score winners, its net pool rolls over to the World Cup Final prize pool.
+// Set WORLDCUP_FINAL_MATCH_CODE after creating the final match for the safest targeting.
+// If it is not set, the bot will treat a match_stage containing "Final" as the final match.
+const CARRYOVER_NO_WINNER_TO_FINAL_ENABLED = String(process.env.CARRYOVER_NO_WINNER_TO_FINAL_ENABLED || "true").toLowerCase() === "true";
+const WORLDCUP_FINAL_MATCH_CODE = String(process.env.WORLDCUP_FINAL_MATCH_CODE || process.env.FINAL_MATCH_CODE || "").trim().toUpperCase();
+
 const ADMIN_USER_IDS = (process.env.ADMIN_USER_IDS || "")
   .split(",")
   .map((id) => id.trim())
@@ -1037,32 +1043,30 @@ function buildRulesMessage(ctxOrLang = null) {
   const feePercent = formatAmount(new Decimal(PLATFORM_FEE_BPS).div(100));
 
   if (isZh(ctxOrLang)) {
-    return `1. 点击“比赛”，选择比赛、预测方向、准确比分和 UE 投票金额。
-2. 最低投票金额：${formatAmount(MIN_BET_AMOUNT)} UE。
-3. 按 Bot 显示金额转账至：${TRANSFER_ADDRESS}。
-4. 转账备注必须准确填写订单 ID，错误或缺失可能导致无法确认。
-5. 少转订单需补足后才可确认。
-6. 多转订单仅按订单金额计入奖池，超出部分由 Admin 人工处理。
-7. 比赛开赛前 15 分钟停止投票，逾期到账可能不计入。
-8. 猜中准确比分的用户按已确认投票金额比例瓜分净奖池。
-9. 平台手续费：${feePercent}%，从每场奖池中扣除。
-10. 奖励将在次日 1pm（UTC+4）前完成发放。
-11. 赛事取消或异常时，退款以 Admin/财务复核为准。
-12. UEEx 保留对付款、退款及奖励资格的最终审核权。`;
+    return `📜 规则
+
+💵 最低投票：${formatAmount(MIN_BET_AMOUNT)} UE
+🏦 官方地址：${TRANSFER_ADDRESS}
+🧾 转账备注必须填写订单 ID；少转需补足，多转仅订单金额计入奖池。
+⏰ 开赛前 15 分钟停止投票，逾期到账可能不计入。
+🧮 平台手续费：${feePercent}%，从每场奖池扣除。
+🎯 猜中准确比分，按中奖金额占比瓜分净奖池。
+♻️ 若本场无人猜中准确比分，该场净奖池累计至世界杯总决赛。
+🏆 总决赛中奖用户瓜分：总决赛净奖池 + 累计奖池。
+📤 奖励预计次日 1pm（UTC+4）前发放；异常情况以 Admin/财务复核为准。`;
   }
 
-  return `1. Tap Matches and choose a match, prediction, exact score, and UE amount.
-2. Minimum voting amount: ${formatAmount(MIN_BET_AMOUNT)} UE.
-3. Transfer the required UE amount to: ${TRANSFER_ADDRESS}.
-4. Enter the exact Order ID as the transfer remark. Wrong or missing remarks may prevent confirmation.
-5. Underpaid orders require a top-up before confirmation.
-6. Overpaid orders count only the order amount; extra funds are reviewed by Admin.
-7. Voting closes 15 minutes before kick-off. Late payments may not count.
-8. Exact-score winners share the net prize pool by confirmed voting amount.
-9. Platform fee: ${feePercent}% per match pool.
-10. Rewards will be distributed by 1pm (UTC+4) the next day.
-11. Cancelled or abnormal matches may be refunded after Admin/Finance review.
-12. UEEx reserves the right to review payments, refunds, and reward eligibility.`;
+  return `📜 Rules
+
+💵 Minimum vote: ${formatAmount(MIN_BET_AMOUNT)} UE
+🏦 Official address: ${TRANSFER_ADDRESS}
+🧾 Use the Order ID as the transfer remark. Underpaid orders need top-up; overpaid orders count only the order amount.
+⏰ Voting closes 15 minutes before kick-off. Late payments may not count.
+🧮 Platform fee: ${feePercent}% per match pool.
+🎯 Exact-score winners share the net pool by winning-vote amount.
+♻️ If no one hits the exact score, that match net pool rolls over to the World Cup Final.
+🏆 Final winners share: Final net pool + carryover pool.
+📤 Rewards are expected by 1pm (UTC+4) the next day. Abnormal cases are subject to Admin/Finance review.`;
 }
 
 async function showRules(ctx) {
@@ -1078,64 +1082,36 @@ function buildHowToPlayMessage(ctxOrLang = null) {
   const feePercent = formatAmount(new Decimal(PLATFORM_FEE_BPS).div(100));
 
   if (isZh(ctxOrLang)) {
-    return `📌 如何参与
+    return `🎮 玩法
 
-1. 点击“比赛”，选择比赛、方向、比分和 UE 金额。
-2. 按 Bot 显示金额转账至官方地址。
-3. 转账备注必须填写正确订单 ID。
-4. 付款确认后，订单才会计入奖池。
+1️⃣ 选择比赛、方向、准确比分和 UE 金额。
+2️⃣ 按 Bot 显示金额转账，备注填写订单 ID。
+3️⃣ 到账确认后，投票才计入奖池。
 
-🏆 奖池规则
+🏆 奖池
 
-• 每场比赛独立奖池。
-• 平台收取 ${feePercent}% 手续费。
-• 扣除手续费后为净奖池。
-• 猜中准确比分的用户，按已确认投票金额比例瓜分净奖池。
+• 每场扣除 ${feePercent}% 手续费后为净奖池。
+• 猜中准确比分，按中奖金额占比瓜分净奖池。
+• 本场无人猜中：净奖池累计到世界杯总决赛。
+• 总决赛中奖用户瓜分：总决赛净奖池 + 累计奖池。
 
-📝 示例
-
-总奖池：10,000 UE
-手续费：${feePercent}%
-净奖池：9,500 UE
-
-如果中奖池为 5,000 UE，你投入 1,000 UE，即占 20%，预计获得净奖池的 20%。
-
-⚠️ 重要提醒
-
-• 订单备注必须正确。
-• 少转需补足后才可确认。
-• 多转仅按订单金额计入奖池，超出部分由 Admin 人工处理。
-• 奖励将在次日 1pm（UTC+4）前发放。`;
+⚠️ 订单备注要正确；少转需补足，多转超出部分由 Admin 人工处理。`;
   }
 
-  return `📌 How to Join
+  return `🎮 How to Play
 
-1. Tap Matches and choose a match, prediction, exact score, and UE amount.
-2. Transfer the amount shown by the bot to the official address.
-3. Enter the correct Order ID as the transfer remark.
-4. Your order counts only after payment confirmation.
+1️⃣ Pick a match, side, exact score, and UE amount.
+2️⃣ Transfer the bot-shown amount and use the Order ID as the remark.
+3️⃣ Your vote counts after payment confirmation.
 
 🏆 Prize Pool
 
-• Each match has its own prize pool.
-• UEEx charges a ${feePercent}% platform fee.
-• The remaining amount is the net prize pool.
-• Exact-score winners share the net prize pool by confirmed voting amount.
+• Each match net pool is after the ${feePercent}% platform fee.
+• Exact-score winners share the net pool by winning-vote amount.
+• No exact-score winners: the net pool rolls over to the World Cup Final.
+• Final winners share: Final net pool + carryover pool.
 
-📝 Example
-
-Total pool: 10,000 UE
-Platform fee: ${feePercent}%
-Net pool: 9,500 UE
-
-If the winning-score pool is 5,000 UE and your confirmed vote is 1,000 UE, you receive about 20% of the net prize pool.
-
-⚠️ Important
-
-• Correct Order ID remark is required.
-• Underpaid orders need a top-up.
-• Overpaid orders count only the order amount; extra funds are handled by Admin.
-• Rewards will be distributed by 1pm (UTC+4) the next day.`;
+⚠️ Use the correct remark. Underpaid orders need top-up; extra overpayment is reviewed by Admin.`;
 }
 
 async function showHowToPlay(ctx) {
@@ -3727,9 +3703,106 @@ async function loadConfirmedOrders(matchCode) {
   return data || [];
 }
 
-function calculateSettlement(matchData, orders) {
+function normalizeStageForMatchStage(stage) {
+  return String(stage || "").trim().toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
+function isWorldCupFinalMatch(matchData) {
+  if (!matchData) return false;
+
+  const matchCode = String(matchData.match_code || "").trim().toUpperCase();
+  if (WORLDCUP_FINAL_MATCH_CODE && matchCode === WORLDCUP_FINAL_MATCH_CODE) return true;
+
+  const normalizedStage = normalizeStageForMatchStage(matchData.match_stage);
+  return normalizedStage === "final" || normalizedStage === "worldcupfinal" || normalizedStage === "grandfinal" || normalizedStage === "championship";
+}
+
+function decimalFromDb(value) {
+  try {
+    const amount = new Decimal(value || 0);
+    return amount.isFinite() ? amount : new Decimal(0);
+  } catch (error) {
+    return new Decimal(0);
+  }
+}
+
+function isNoWinnerCarryoverSettlement(row) {
+  if (!row || String(row.status || "").toLowerCase() !== "settled") return false;
+
+  const netPool = decimalFromDb(row.net_pool);
+  const winningPool = decimalFromDb(row.winning_pool);
+
+  return netPool.gt(0) && winningPool.eq(0);
+}
+
+async function loadFinalCarryovers(finalMatchCode) {
+  if (!CARRYOVER_NO_WINNER_TO_FINAL_ENABLED) return [];
+
+  const { data, error } = await supabase
+    .from("wc_settlements")
+    .select("match_code,result,total_pool,fee_amount,net_pool,winning_pool,fee_bps,status,settled_at")
+    .eq("status", "settled")
+    .neq("match_code", finalMatchCode)
+    .order("settled_at", { ascending: true })
+    .limit(500);
+
+  if (error) {
+    throw new Error(`Failed to load final carryovers: ${error.message}`);
+  }
+
+  return (data || []).filter(isNoWinnerCarryoverSettlement);
+}
+
+function getCarryoverTotal(carryovers) {
+  return (carryovers || []).reduce((sum, item) => sum.plus(decimalFromDb(item.net_pool)), new Decimal(0));
+}
+
+async function loadCurrentFinalCarryovers(currentMatchData = null) {
+  if (!CARRYOVER_NO_WINNER_TO_FINAL_ENABLED) return [];
+
+  const { data, error } = await supabase
+    .from("wc_settlements")
+    .select("match_code,result,total_pool,fee_amount,net_pool,winning_pool,fee_bps,status,settled_at")
+    .eq("status", "settled")
+    .order("settled_at", { ascending: true })
+    .limit(500);
+
+  if (error) {
+    throw new Error(`Failed to load current final carryovers: ${error.message}`);
+  }
+
+  const currentMatchCode = String(currentMatchData?.match_code || "").trim().toUpperCase();
+
+  return (data || []).filter((row) => {
+    const rowMatchCode = String(row.match_code || "").trim().toUpperCase();
+
+    if (WORLDCUP_FINAL_MATCH_CODE && rowMatchCode === WORLDCUP_FINAL_MATCH_CODE) return false;
+    if (currentMatchCode && isWorldCupFinalMatch(currentMatchData) && rowMatchCode === currentMatchCode) return false;
+
+    return isNoWinnerCarryoverSettlement(row);
+  });
+}
+
+async function getCurrentFinalCarryoverTotal(currentMatchData = null) {
+  return getCarryoverTotal(await loadCurrentFinalCarryovers(currentMatchData));
+}
+
+function buildCarryoverLines(carryovers, currency, maxItems = 20) {
+  const rows = (carryovers || []).slice(0, maxItems).map((item, index) => {
+    return `${index + 1}. ${item.match_code} - ${formatAmount(decimalFromDb(item.net_pool))} ${currency}`;
+  });
+
+  if ((carryovers || []).length > maxItems) {
+    rows.push(`...and ${(carryovers || []).length - maxItems} more carryover match(es).`);
+  }
+
+  return rows;
+}
+
+function calculateSettlement(matchData, orders, carryovers = []) {
   const result = matchData.result;
   const feeBps = Number(matchData.fee_bps || PLATFORM_FEE_BPS);
+  const isFinalMatch = isWorldCupFinalMatch(matchData);
 
   let totalPool = new Decimal(0);
   let winningPool = new Decimal(0);
@@ -3744,13 +3817,18 @@ function calculateSettlement(matchData, orders) {
   }
 
   const feeAmount = totalPool.mul(feeBps).div(10000);
-  const netPool = totalPool.minus(feeAmount);
+  const netPoolBeforeCarryover = totalPool.minus(feeAmount);
+  const carryoverTotal = isFinalMatch ? getCarryoverTotal(carryovers) : new Decimal(0);
+  const payoutPool = netPoolBeforeCarryover.plus(carryoverTotal);
+  const noWinnerCarryoverAmount = !isFinalMatch && winningPool.eq(0) && netPoolBeforeCarryover.gt(0)
+    ? netPoolBeforeCarryover
+    : new Decimal(0);
 
   const winners = orders.filter((order) => order.selection === result);
   const payouts = winners.map((order) => {
     const winningAmount = new Decimal(order.confirmed_amount || 0);
     const payoutAmount = winningPool.gt(0)
-      ? winningAmount.div(winningPool).mul(netPool)
+      ? winningAmount.div(winningPool).mul(payoutPool)
       : new Decimal(0);
 
     return {
@@ -3765,7 +3843,13 @@ function calculateSettlement(matchData, orders) {
     feeBps,
     totalPool,
     feeAmount,
-    netPool,
+    netPool: payoutPool,
+    netPoolBeforeCarryover,
+    carryoverTotal,
+    carryovers: carryovers || [],
+    payoutPool,
+    noWinnerCarryoverAmount,
+    isFinalMatch,
     winningPool,
     winners,
     payouts
@@ -3774,6 +3858,7 @@ function calculateSettlement(matchData, orders) {
 
 function buildSettlementPreviewMessage(matchData, settlement) {
   const feePercent = new Decimal(settlement.feeBps).div(100).toFixed();
+  const carryoverLines = buildCarryoverLines(settlement.carryovers, matchData.currency);
 
   const lines = settlement.payouts.map((payout, index) => {
     const order = payout.order;
@@ -3781,6 +3866,12 @@ function buildSettlementPreviewMessage(matchData, settlement) {
 
     return `${index + 1}. ${user} / UID ${order.ueex_uid} - Vote ${formatAmount(payout.winningAmount)} ${matchData.currency} - Payout ${formatAmount(payout.payoutAmount)} ${matchData.currency}`;
   });
+
+  const carryoverSection = settlement.isFinalMatch
+    ? `\n🏆 Final Carryover Added: ${formatAmount(settlement.carryoverTotal)} ${matchData.currency}\n${carryoverLines.length ? carryoverLines.join("\n") : "No carryover matches."}\n🎁 Final Payout Pool: ${formatAmount(settlement.payoutPool)} ${matchData.currency}`
+    : settlement.noWinnerCarryoverAmount.gt(0)
+      ? `\n♻️ No exact-score winners. Carryover to World Cup Final: ${formatAmount(settlement.noWinnerCarryoverAmount)} ${matchData.currency}`
+      : "";
 
   return `🏆 Settlement Preview
 
@@ -3790,7 +3881,7 @@ Result: ${formatSelectionWithFlags(matchData, settlement.result)}
 
 💰 Total Pool: ${formatAmount(settlement.totalPool)} ${matchData.currency}
 🏦 Platform Fee ${feePercent}%: ${formatAmount(settlement.feeAmount)} ${matchData.currency}
-🎁 Net Pool: ${formatAmount(settlement.netPool)} ${matchData.currency}
+🎁 Net Pool: ${formatAmount(settlement.netPoolBeforeCarryover)} ${matchData.currency}${carryoverSection}
 🎯 Winning Pool: ${formatAmount(settlement.winningPool)} ${matchData.currency}
 
 Winners:
@@ -3806,12 +3897,19 @@ function getPublicUserLabel(order, index) {
 
 function buildSettlementCompletedAdminMessage(matchData, settlement) {
   const feePercent = new Decimal(settlement.feeBps).div(100).toFixed();
+  const carryoverLines = buildCarryoverLines(settlement.carryovers, matchData.currency);
   const winnerLines = settlement.payouts.map((payout, index) => {
     const order = payout.order;
     return `${index + 1}. ${getTelegramUserLabel(order)} / UID ${order.ueex_uid}
    Vote: ${formatAmount(payout.winningAmount)} ${matchData.currency}
    Payout: ${formatAmount(payout.payoutAmount)} ${matchData.currency}`;
   });
+
+  const carryoverSection = settlement.isFinalMatch
+    ? `\n🏆 Final Carryover Added: ${formatAmount(settlement.carryoverTotal)} ${matchData.currency}\n${carryoverLines.length ? carryoverLines.join("\n") : "No carryover matches."}\n🎁 Final Payout Pool: ${formatAmount(settlement.payoutPool)} ${matchData.currency}`
+    : settlement.noWinnerCarryoverAmount.gt(0)
+      ? `\n♻️ No exact-score winners. Carryover to World Cup Final: ${formatAmount(settlement.noWinnerCarryoverAmount)} ${matchData.currency}`
+      : "";
 
   return `✅ Settlement Completed
 
@@ -3821,14 +3919,14 @@ function buildSettlementCompletedAdminMessage(matchData, settlement) {
 
 💰 Total Pool: ${formatAmount(settlement.totalPool)} ${matchData.currency}
 🏦 Platform Fee ${feePercent}%: ${formatAmount(settlement.feeAmount)} ${matchData.currency}
-🎁 Net Pool: ${formatAmount(settlement.netPool)} ${matchData.currency}
+🎁 Net Pool: ${formatAmount(settlement.netPoolBeforeCarryover)} ${matchData.currency}${carryoverSection}
 🎯 Winning Pool: ${formatAmount(settlement.winningPool)} ${matchData.currency}
 
 Winners:
 ${winnerLines.length ? winnerLines.join("\n\n") : "No winners."}`;
 }
 
-function buildSettlementPublicMessage(matchData, settlement) {
+function buildSettlementPublicMessage(matchData, settlement, finalCarryoverTotal = null) {
   const feePercent = new Decimal(settlement.feeBps).div(100).toFixed();
   const winnerLines = settlement.payouts.map((payout, index) => {
     const order = payout.order;
@@ -3837,20 +3935,41 @@ function buildSettlementPublicMessage(matchData, settlement) {
    Payout: ${formatAmount(payout.payoutAmount)} ${matchData.currency}`;
   });
 
+  const carryoverSection = settlement.isFinalMatch
+    ? `
+🏆 Final Carryover Added: ${formatAmount(settlement.carryoverTotal)} ${matchData.currency}
+🎁 Final Payout Pool: ${formatAmount(settlement.payoutPool)} ${matchData.currency}`
+    : settlement.noWinnerCarryoverAmount.gt(0)
+      ? `
+♻️ No exact-score winners. Net pool carried over to the World Cup Final: ${formatAmount(settlement.noWinnerCarryoverAmount)} ${matchData.currency}`
+      : "";
+
+  const finalCarryoverSection = finalCarryoverTotal !== null && finalCarryoverTotal !== undefined
+    ? `
+🏆 Current Final Carryover Pool: ${formatAmount(finalCarryoverTotal)} ${matchData.currency}`
+    : "";
+
+  const ending = winnerLines.length
+    ? "Congratulations to all winners! 🎉"
+    : settlement.isFinalMatch
+      ? "No exact-score winners in the Final. UEEx will review this manually."
+      : "No exact-score winners. This net pool has been carried over to the World Cup Final prize pool.";
+
   return `⚽️ ${formatTeamWithFlag(matchData.team_a)} vs ${formatTeamWithFlag(matchData.team_b)}
 🔸 Match ID: ${matchData.match_code}
 🔸 Result: ${formatSelectionWithFlags(matchData, settlement.result)}
 
 💰 Total Pool: ${formatAmount(settlement.totalPool)} ${matchData.currency}
 🏦 Platform Fee ${feePercent}%: ${formatAmount(settlement.feeAmount)} ${matchData.currency}
-🎁 Net Pool: ${formatAmount(settlement.netPool)} ${matchData.currency}
-🎯 Winning Pool: ${formatAmount(settlement.winningPool)} ${matchData.currency}
+🎁 Net Pool: ${formatAmount(settlement.netPoolBeforeCarryover)} ${matchData.currency}${carryoverSection}
+🎯 Winning Pool: ${formatAmount(settlement.winningPool)} ${matchData.currency}${finalCarryoverSection}
 
 Winners:
-${winnerLines.length ? winnerLines.join("\n\n") : "No winners. UEEx will review this match manually."}
+${winnerLines.length ? winnerLines.join("\n\n") : "No winners."}
 
-Congratulations to all winners! 🎉`;
+${ending}`;
 }
+
 
 function buildWinningUserSettlementMessage(matchData, order, payout) {
   const voteAmount = new Decimal(order.confirmed_amount || 0);
@@ -3878,25 +3997,51 @@ function buildWinningUserSettlementMessage(matchData, order, payout) {
 Rewards will be arranged after final review.`;
 }
 
-function buildLosingUserSettlementMessage(matchData, order, noWinnerMode = false) {
+function buildLosingUserSettlementMessage(matchData, order, noWinnerMode = false, settlement = null) {
   const voteAmount = new Decimal(order.confirmed_amount || 0);
 
   if (noWinnerMode) {
+    if (settlement?.isFinalMatch) {
+      if (isZh(order.telegram_id)) {
+        return `⚽️ 比赛: ${formatTeamWithFlag(matchData.team_a)} vs ${formatTeamWithFlag(matchData.team_b)}
+🔸 赛果: ${formatSelectionWithFlags(matchData, matchData.result)}
+🔸 你的选择: ${formatSelectionWithFlags(matchData, order.selection)}
+🔸 你的投票: ${formatAmount(voteAmount)} ${matchData.currency}
+🔸 总盈亏: -${formatAmount(voteAmount)} ${matchData.currency}
+
+❌ 未猜中准确比分。
+⚠️ 总决赛无人中奖，UEEx 将进行人工复核。`;
+      }
+
+      return `⚽️ Match: ${formatTeamWithFlag(matchData.team_a)} vs ${formatTeamWithFlag(matchData.team_b)}
+🔸 Result: ${formatSelectionWithFlags(matchData, matchData.result)}
+🔸 Your Selection: ${formatSelectionWithFlags(matchData, order.selection)}
+🔸 Your Vote: ${formatAmount(voteAmount)} ${matchData.currency}
+🔸 Total PnL: -${formatAmount(voteAmount)} ${matchData.currency}
+
+❌ Your exact score did not win.
+⚠️ No exact-score winners in the Final. UEEx will review this manually.`;
+    }
+
     if (isZh(order.telegram_id)) {
       return `⚽️ 比赛: ${formatTeamWithFlag(matchData.team_a)} vs ${formatTeamWithFlag(matchData.team_b)}
 🔸 赛果: ${formatSelectionWithFlags(matchData, matchData.result)}
 🔸 你的选择: ${formatSelectionWithFlags(matchData, order.selection)}
 🔸 你的投票: ${formatAmount(voteAmount)} ${matchData.currency}
+🔸 总盈亏: -${formatAmount(voteAmount)} ${matchData.currency}
 
-本场没有准确比分中奖用户，UEEx 将进行人工复核。`;
+❌ 未猜中准确比分。
+♻️ 本场暂无赢家，净奖池累计至世界杯总决赛。`;
     }
 
     return `⚽️ Match: ${formatTeamWithFlag(matchData.team_a)} vs ${formatTeamWithFlag(matchData.team_b)}
 🔸 Result: ${formatSelectionWithFlags(matchData, matchData.result)}
 🔸 Your Selection: ${formatSelectionWithFlags(matchData, order.selection)}
 🔸 Your Vote: ${formatAmount(voteAmount)} ${matchData.currency}
+🔸 Total PnL: -${formatAmount(voteAmount)} ${matchData.currency}
 
-No exact-score winners were found. UEEx will review this match manually.`;
+❌ Your exact score did not win.
+♻️ No exact-score winners this match. The net pool rolls over to the World Cup Final.`;
   }
 
   if (isZh(order.telegram_id)) {
@@ -3917,6 +4062,7 @@ No exact-score winners were found. UEEx will review this match manually.`;
 
 Thank you for participating.`;
 }
+
 
 function splitLongMessage(text, maxLength = 3800) {
   const lines = String(text || "").split("\n");
@@ -4008,7 +4154,7 @@ async function notifySettlementUsers(matchData, orders, settlement) {
     const payout = payoutByOrderKey.get(key);
     const message = payout
       ? buildWinningUserSettlementMessage(matchData, order, payout)
-      : buildLosingUserSettlementMessage(matchData, order, noWinnerMode);
+      : buildLosingUserSettlementMessage(matchData, order, noWinnerMode, settlement);
     const imageUrl = payout ? getLocalizedImageUrl(order.telegram_id, WINNER_IMAGE_URL, WINNER_IMAGE_URL_ZH) : getLocalizedImageUrl(order.telegram_id, LOSER_IMAGE_URL, LOSER_IMAGE_URL_ZH);
 
     try {
@@ -4041,7 +4187,8 @@ async function previewSettlement(ctx, text) {
   }
 
   const orders = await loadConfirmedOrders(matchCode);
-  const settlement = calculateSettlement(matchData, orders);
+  const carryovers = isWorldCupFinalMatch(matchData) ? await loadFinalCarryovers(matchCode) : [];
+  const settlement = calculateSettlement(matchData, orders, carryovers);
 
   const settlementPayload = {
     match_code: matchData.match_code,
@@ -4129,7 +4276,8 @@ async function settleMatch(ctx, text) {
   }
 
   const orders = await loadConfirmedOrders(matchCode);
-  const settlement = calculateSettlement(matchData, orders);
+  const carryovers = isWorldCupFinalMatch(matchData) ? await loadFinalCarryovers(matchCode) : [];
+  const settlement = calculateSettlement(matchData, orders, carryovers);
 
   await supabase
     .from("wc_settlements")
@@ -4158,8 +4306,15 @@ async function settleMatch(ctx, text) {
 
   await notifySettlementUsers(matchData, orders, settlement);
 
+  let finalCarryoverTotal = null;
+  try {
+    finalCarryoverTotal = await getCurrentFinalCarryoverTotal(matchData);
+  } catch (error) {
+    console.error("Failed to load current final carryover total for public settlement message:", error.message);
+  }
+
   const adminMessage = buildSettlementCompletedAdminMessage(matchData, settlement);
-  const publicMessage = buildSettlementPublicMessage(matchData, settlement);
+  const publicMessage = buildSettlementPublicMessage(matchData, settlement, finalCarryoverTotal);
 
   const publicNotifyResult = await notifyPublicWorldCupTopicLong(publicMessage, MATCH_CANCELLED_IMAGE_URL);
   const adminFinalMessage = `${adminMessage}
@@ -4209,6 +4364,7 @@ function buildMatchStatsMap(matches, confirmedOrders) {
       totalPool: new Decimal(0),
       winningPool: new Decimal(0),
       netPool: new Decimal(0),
+      carryoverTotal: new Decimal(0),
       feeBps: Number(match.fee_bps || PLATFORM_FEE_BPS),
       orders: []
     });
@@ -4233,6 +4389,26 @@ function buildMatchStatsMap(matches, confirmedOrders) {
   }
 
   return map;
+}
+
+
+async function applyFinalCarryoversToStatsMap(matches, statsMap) {
+  if (!CARRYOVER_NO_WINNER_TO_FINAL_ENABLED) return;
+
+  for (const match of matches || []) {
+    if (!isWorldCupFinalMatch(match)) continue;
+
+    const stats = statsMap.get(match.match_code);
+    if (!stats) continue;
+
+    const carryovers = await loadFinalCarryovers(match.match_code);
+    const carryoverTotal = getCarryoverTotal(carryovers);
+
+    if (carryoverTotal.gt(0)) {
+      stats.carryoverTotal = carryoverTotal;
+      stats.netPool = stats.netPool.plus(carryoverTotal);
+    }
+  }
 }
 
 function calculateOrderPnlValue(order, match, stats) {
@@ -4296,6 +4472,7 @@ async function showMyVote(ctx) {
   const confirmedOrders = await getConfirmedOrdersForMatches(matchCodes);
   const matchMap = new Map((matches || []).map((match) => [match.match_code, match]));
   const statsMap = buildMatchStatsMap(matches || [], confirmedOrders);
+  await applyFinalCarryoversToStatsMap(matches || [], statsMap);
 
   let totalVoteAmount = new Decimal(0);
   let totalPnlAmount = new Decimal(0);
@@ -4309,6 +4486,12 @@ async function showMyVote(ctx) {
     const amount = order.status === "confirmed" ? order.confirmed_amount : order.expected_amount;
     const amountDecimal = new Decimal(amount || 0);
     const totalPool = stats ? stats.totalPool : new Decimal(0);
+    const carryoverTotal = stats?.carryoverTotal || new Decimal(0);
+    const carryoverLine = carryoverTotal.gt(0)
+      ? (isZh(ctx) ? `
+🔸 总决赛累计奖池: ${formatAmount(carryoverTotal)} ${order.currency}` : `
+🔸 Final Carryover Pool: ${formatAmount(carryoverTotal)} ${order.currency}`)
+      : "";
     const resultDisplay = getMatchResultDisplay(match, ctx);
     const pnl = calculateOrderPnl(order, match, stats);
     const pnlValue = calculateOrderPnlValue(order, match, stats);
@@ -4329,7 +4512,7 @@ async function showMyVote(ctx) {
 🔸 订单: ${order.order_code}
 🔸 选择: ${selection}
 🔸 金额: ${formatAmount(amount)} ${order.currency}
-🔸 总奖池: ${formatAmount(totalPool)} ${order.currency}
+🔸 总奖池: ${formatAmount(totalPool)} ${order.currency}${carryoverLine}
 🔸 订单状态: ${orderStatus}
 🔸 比赛赛果: ${resultDisplay}
 🔸 总盈亏: ${pnl}`;
@@ -4340,7 +4523,7 @@ async function showMyVote(ctx) {
 🔸 Order: ${order.order_code}
 🔸 Selection: ${selection}
 🔸 Amount: ${formatAmount(amount)} ${order.currency}
-🔸 Total Pool: ${formatAmount(totalPool)} ${order.currency}
+🔸 Total Pool: ${formatAmount(totalPool)} ${order.currency}${carryoverLine}
 🔸 Order Status: ${orderStatus}
 🔸 Game Result: ${resultDisplay}
 🔸 Total PnL: ${pnl}`;
