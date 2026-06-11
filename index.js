@@ -1043,30 +1043,26 @@ function buildRulesMessage(ctxOrLang = null) {
   const feePercent = formatAmount(new Decimal(PLATFORM_FEE_BPS).div(100));
 
   if (isZh(ctxOrLang)) {
-    return `📜 规则
-
-💵 最低投票：${formatAmount(MIN_BET_AMOUNT)} UE
-🏦 官方地址：${TRANSFER_ADDRESS}
-🧾 转账备注必须填写订单 ID；少转需补足，多转仅订单金额计入奖池。
-⏰ 开赛前 15 分钟停止投票，逾期到账可能不计入。
-🧮 平台手续费：${feePercent}%，从每场奖池扣除。
-🎯 猜中准确比分，按中奖金额占比瓜分净奖池。
-♻️ 若本场无人猜中准确比分，该场净奖池累计至世界杯总决赛。
-🏆 总决赛中奖用户瓜分：总决赛净奖池 + 累计奖池。
-📤 奖励预计次日 1pm（UTC+4）前发放；异常情况以 Admin/财务复核为准。`;
+    return `🔸 最低投票：${formatAmount(MIN_BET_AMOUNT)} UE
+🔸 官方地址：${TRANSFER_ADDRESS}
+🔸 转账备注必须填写订单 ID；少转需补足，多转仅订单金额计入奖池。
+🔸 开赛前 15 分钟停止投票，逾期到账可能不计入。
+🔸 平台手续费：${feePercent}%，从每场奖池扣除。
+🔸 猜中准确比分，按中奖金额占比瓜分净奖池。
+🔸 若本场无人猜中准确比分，该场净奖池累计至世界杯总决赛。
+🔸 总决赛中奖用户瓜分：总决赛净奖池 + 累计奖池。
+🔸 奖励预计次日 1pm（UTC+4）前发放；异常情况以 Admin/财务复核为准。`;
   }
 
-  return `📜 Rules
-
-💵 Minimum vote: ${formatAmount(MIN_BET_AMOUNT)} UE
-🏦 Official address: ${TRANSFER_ADDRESS}
-🧾 Use the Order ID as the transfer remark. Underpaid orders need top-up; overpaid orders count only the order amount.
-⏰ Voting closes 15 minutes before kick-off. Late payments may not count.
-🧮 Platform fee: ${feePercent}% per match pool.
-🎯 Exact-score winners share the net pool by winning-vote amount.
-♻️ If no one hits the exact score, that match net pool rolls over to the World Cup Final.
-🏆 Final winners share: Final net pool + carryover pool.
-📤 Rewards are expected by 1pm (UTC+4) the next day. Abnormal cases are subject to Admin/Finance review.`;
+  return `🔸 Minimum vote: ${formatAmount(MIN_BET_AMOUNT)} UE
+🔸 Official address: ${TRANSFER_ADDRESS}
+🔸 Use the Order ID as the transfer remark. Underpaid orders need top-up; overpaid orders count only the order amount.
+🔸 Voting closes 15 minutes before kick-off. Late payments may not count.
+🔸 Platform fee: ${feePercent}% per match pool.
+🔸 Exact-score winners share the net pool by winning-vote amount.
+🔸 If no one hits the exact score, that match net pool rolls over to the World Cup Final.
+🔸 Final winners share: Final net pool + carryover pool.
+🔸 Rewards are expected by 1pm (UTC+4) the next day. Abnormal cases are subject to Admin/Finance review.`;
 }
 
 async function showRules(ctx) {
@@ -1082,9 +1078,7 @@ function buildHowToPlayMessage(ctxOrLang = null) {
   const feePercent = formatAmount(new Decimal(PLATFORM_FEE_BPS).div(100));
 
   if (isZh(ctxOrLang)) {
-    return `🎮 玩法
-
-1️⃣ 选择比赛、方向、准确比分和 UE 金额。
+    return `1️⃣ 选择比赛、方向、准确比分和 UE 金额。
 2️⃣ 按 Bot 显示金额转账，备注填写订单 ID。
 3️⃣ 到账确认后，投票才计入奖池。
 
@@ -1098,9 +1092,7 @@ function buildHowToPlayMessage(ctxOrLang = null) {
 ⚠️ 订单备注要正确；少转需补足，多转超出部分由 Admin 人工处理。`;
   }
 
-  return `🎮 How to Play
-
-1️⃣ Pick a match, side, exact score, and UE amount.
+  return `1️⃣ Pick a match, side, exact score, and UE amount.
 2️⃣ Transfer the bot-shown amount and use the Order ID as the remark.
 3️⃣ Your vote counts after payment confirmation.
 
