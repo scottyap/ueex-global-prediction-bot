@@ -1096,6 +1096,7 @@ function buildRulesMessage(ctxOrLang = null) {
 ⏰ 开赛前 15 分钟停止投票，逾期到账可能不计入。
 🧮 平台手续费：${feePercent}%，从每场奖池扣除。
 🎯 猜中准确比分，按中奖金额占比瓜分净奖池。
+⏱️ 比分按官方90分钟结果结算，含伤停补时，不含加时/点球。
 ♻️ 若本场无人猜中准确比分，该场净奖池累计至世界杯总决赛。
 🏆 总决赛中奖用户瓜分：总决赛净奖池 + 累计奖池。
 📤 奖励预计次日 1pm（UTC+4）前发放；异常情况以 Admin/财务复核为准。`;
@@ -1109,6 +1110,7 @@ function buildRulesMessage(ctxOrLang = null) {
 ⏰ Voting closes 15 minutes before kick-off. Late payments may not count.
 🧮 Platform fee: ${feePercent}% per match pool.
 🎯 Exact-score winners share the net pool by winning-vote amount.
+⏱️ Scores are settled by the official 90-minute result, including stoppage time, excluding extra time/penalties.
 ♻️ If no one hits the exact score, that match net pool rolls over to the World Cup Final.
 🏆 Final winners share: Final net pool + carryover pool.
 📤 Rewards are expected by 1pm (UTC+4) the next day. Abnormal cases are subject to Admin/Finance review.`;
@@ -1137,6 +1139,7 @@ function buildHowToPlayMessage(ctxOrLang = null) {
 
 • 每场扣除 ${feePercent}% 手续费后为净奖池。
 • 猜中准确比分，按中奖金额占比瓜分净奖池。
+• 比分按90分钟+伤停补时结算，不含加时/点球。
 • 本场无人猜中：净奖池累计到世界杯总决赛。
 • 总决赛中奖用户瓜分：总决赛净奖池 + 累计奖池。
 
@@ -1153,6 +1156,7 @@ function buildHowToPlayMessage(ctxOrLang = null) {
 
 • Each match net pool is after the ${feePercent}% platform fee.
 • Exact-score winners share the net pool by winning-vote amount.
+• Scores use 90 mins + stoppage time only, excluding extra time/penalties.
 • No exact-score winners: the net pool rolls over to the World Cup Final.
 • Final winners share: Final net pool + carryover pool.
 
@@ -1297,6 +1301,7 @@ ${getMatchMetaLines(match, ctxOrLang)}🔸 状态: ${statusText}
 
 🎉总奖池: ${formatAmount(totalPool)} ${match.currency}
 
+⏱️ 比分按90分钟+伤停补时结算，不含加时/点球。
 请选择下方准确比分。`;
   }
 
@@ -1310,6 +1315,7 @@ ${getMatchMetaLines(match, ctxOrLang)}🔸 Status: ${statusText}
 
 🎉Total Pool: ${formatAmount(totalPool)} ${match.currency}
 
+⏱️ Scores use 90 mins + stoppage time only, excluding extra time/penalties.
 Please select the exact score below.`;
 }
 
@@ -1342,6 +1348,7 @@ function buildPublicMatchMessage(match, totals) {
 • Minimum voting amount: ${formatAmount(MIN_BET_AMOUNT)} ${match.currency}.
 • Transfer the exact ${match.currency} amount to the BSC address ${TRANSFER_ADDRESS}.
 • Use your Order ID as the transfer remark.
+• Score settlement uses 90 mins + stoppage time only, excluding extra time/penalties.
 • Votes are counted only after payment confirmation.`;
 }
 
@@ -4931,11 +4938,14 @@ Predict the exact score, join the match prize pool, and share rewards with other
 • Underpaid orders must be topped up.
 • Overpaid orders count only the order amount; extra funds will be reviewed by Admin.
 • Voting closes 15 minutes before kick-off.
+• Scores use 90 mins + stoppage time only, excluding extra time/penalties.
 
 🏆 Prize Pool
 • Each match has its own prize pool.
 • UEEx charges a 5% platform fee.
 • Exact-score winners share the net prize pool by confirmed voting amount.
+• No exact-score winners: net pool rolls over to the World Cup Final.
+• Final winners share: Final net pool + carryover pool.
 • Rewards will be distributed by 1pm (UTC+4) the next day.
 
 For full rules, please check the bot menu.
