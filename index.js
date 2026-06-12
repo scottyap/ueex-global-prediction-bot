@@ -1043,26 +1043,30 @@ function buildRulesMessage(ctxOrLang = null) {
   const feePercent = formatAmount(new Decimal(PLATFORM_FEE_BPS).div(100));
 
   if (isZh(ctxOrLang)) {
-    return `🔸 最低投票：${formatAmount(MIN_BET_AMOUNT)} UE
-🔸 官方地址：${TRANSFER_ADDRESS}
-🔸 转账备注必须填写订单 ID；少转需补足，多转仅订单金额计入奖池。
-🔸 开赛前 15 分钟停止投票，逾期到账可能不计入。
-🔸 平台手续费：${feePercent}%，从每场奖池扣除。
-🔸 猜中准确比分，按中奖金额占比瓜分净奖池。
-🔸 若本场无人猜中准确比分，该场净奖池累计至世界杯总决赛。
-🔸 总决赛中奖用户瓜分：总决赛净奖池 + 累计奖池。
-🔸 奖励预计次日 1pm（UTC+4）前发放；异常情况以 Admin/财务复核为准。`;
+    return `📜 规则
+
+💵 最低投票：${formatAmount(MIN_BET_AMOUNT)} UE
+🏦 官方地址：${TRANSFER_ADDRESS}
+🧾 转账备注必须填写订单 ID；少转需补足，多转仅订单金额计入奖池。
+⏰ 开赛前 15 分钟停止投票，逾期到账可能不计入。
+🧮 平台手续费：${feePercent}%，从每场奖池扣除。
+🎯 猜中准确比分，按中奖金额占比瓜分净奖池。
+♻️ 若本场无人猜中准确比分，该场净奖池累计至世界杯总决赛。
+🏆 总决赛中奖用户瓜分：总决赛净奖池 + 累计奖池。
+📤 奖励预计次日 1pm（UTC+4）前发放；异常情况以 Admin/财务复核为准。`;
   }
 
-  return `🔸 Minimum vote: ${formatAmount(MIN_BET_AMOUNT)} UE
-🔸 Official address: ${TRANSFER_ADDRESS}
-🔸 Use the Order ID as the transfer remark. Underpaid orders need top-up; overpaid orders count only the order amount.
-🔸 Voting closes 15 minutes before kick-off. Late payments may not count.
-🔸 Platform fee: ${feePercent}% per match pool.
-🔸 Exact-score winners share the net pool by winning-vote amount.
-🔸 If no one hits the exact score, that match net pool rolls over to the World Cup Final.
-🔸 Final winners share: Final net pool + carryover pool.
-🔸 Rewards are expected by 1pm (UTC+4) the next day. Abnormal cases are subject to Admin/Finance review.`;
+  return `📜 Rules
+
+💵 Minimum vote: ${formatAmount(MIN_BET_AMOUNT)} UE
+🏦 Official address: ${TRANSFER_ADDRESS}
+🧾 Use the Order ID as the transfer remark. Underpaid orders need top-up; overpaid orders count only the order amount.
+⏰ Voting closes 15 minutes before kick-off. Late payments may not count.
+🧮 Platform fee: ${feePercent}% per match pool.
+🎯 Exact-score winners share the net pool by winning-vote amount.
+♻️ If no one hits the exact score, that match net pool rolls over to the World Cup Final.
+🏆 Final winners share: Final net pool + carryover pool.
+📤 Rewards are expected by 1pm (UTC+4) the next day. Abnormal cases are subject to Admin/Finance review.`;
 }
 
 async function showRules(ctx) {
@@ -1078,7 +1082,9 @@ function buildHowToPlayMessage(ctxOrLang = null) {
   const feePercent = formatAmount(new Decimal(PLATFORM_FEE_BPS).div(100));
 
   if (isZh(ctxOrLang)) {
-    return `1️⃣ 选择比赛、方向、准确比分和 UE 金额。
+    return `🎮 玩法
+
+1️⃣ 选择比赛、方向、准确比分和 UE 金额。
 2️⃣ 按 Bot 显示金额转账，备注填写订单 ID。
 3️⃣ 到账确认后，投票才计入奖池。
 
@@ -1092,7 +1098,9 @@ function buildHowToPlayMessage(ctxOrLang = null) {
 ⚠️ 订单备注要正确；少转需补足，多转超出部分由 Admin 人工处理。`;
   }
 
-  return `1️⃣ Pick a match, side, exact score, and UE amount.
+  return `🎮 How to Play
+
+1️⃣ Pick a match, side, exact score, and UE amount.
 2️⃣ Transfer the bot-shown amount and use the Order ID as the remark.
 3️⃣ Your vote counts after payment confirmation.
 
@@ -4086,45 +4094,80 @@ async function replyLongMessage(ctx, text) {
   return lastMessage;
 }
 
-async function notifyPublicWorldCupTopicLong(text, imageUrl = "") {
+async function notifyPublicWorldCupTopicLong(text, imageUrl = "", keyboard = null) {
   if (!PUBLIC_GROUP_CHAT_ID) return null;
 
-  const topicOptions = PUBLIC_WORLD_CUP_TOPIC_ID
+  const baseOptions = PUBLIC_WORLD_CUP_TOPIC_ID
     ? { message_thread_id: Number(PUBLIC_WORLD_CUP_TOPIC_ID), disable_web_page_preview: true }
     : { disable_web_page_preview: true };
+  const fallbackOptions = { disable_web_page_preview: true };
 
-  let lastMessage = null;
+  const withKeyboard = (options, includeKeyboard = false) => {
+    const nextOptions = { ...options };
+    if (includeKeyboard && keyboard?.reply_markup) {
+      nextOptions.reply_markup = keyboard.reply_markup;
+    }
+    return nextOptions;
+  };
 
-  if (imageUrl) {
+  const sendPhotoSafely = async (caption, includeKeyboard = false) => {
+    const photoOptions = withKeyboard({ ...baseOptions, caption }, includeKeyboard);
+
     try {
-      lastMessage = await bot.telegram.sendPhoto(PUBLIC_GROUP_CHAT_ID, imageUrl, topicOptions);
+      return await bot.telegram.sendPhoto(PUBLIC_GROUP_CHAT_ID, imageUrl, photoOptions);
     } catch (error) {
-      console.error("Failed to send public settlement image:", error.message);
+      console.error("Failed to send public settlement image with caption:", error.message);
 
-      if (topicOptions.message_thread_id) {
+      if (baseOptions.message_thread_id) {
         try {
-          lastMessage = await bot.telegram.sendPhoto(PUBLIC_GROUP_CHAT_ID, imageUrl, { disable_web_page_preview: true });
+          return await bot.telegram.sendPhoto(PUBLIC_GROUP_CHAT_ID, imageUrl, withKeyboard({ ...fallbackOptions, caption }, includeKeyboard));
         } catch (fallbackError) {
           console.error("Failed to send public settlement image fallback:", fallbackError.message);
         }
       }
     }
-  }
 
-  for (const chunk of splitLongMessage(text)) {
+    return null;
+  };
+
+  const sendMessageSafely = async (messageText, includeKeyboard = false) => {
     try {
-      lastMessage = await bot.telegram.sendMessage(PUBLIC_GROUP_CHAT_ID, chunk, topicOptions);
+      return await bot.telegram.sendMessage(PUBLIC_GROUP_CHAT_ID, messageText, withKeyboard(baseOptions, includeKeyboard));
     } catch (error) {
       console.error("Failed to send public settlement chunk:", error.message);
 
-      if (topicOptions.message_thread_id) {
+      if (baseOptions.message_thread_id) {
         try {
-          lastMessage = await bot.telegram.sendMessage(PUBLIC_GROUP_CHAT_ID, chunk, { disable_web_page_preview: true });
+          return await bot.telegram.sendMessage(PUBLIC_GROUP_CHAT_ID, messageText, withKeyboard(fallbackOptions, includeKeyboard));
         } catch (fallbackError) {
           console.error("Failed to send public settlement fallback:", fallbackError.message);
         }
       }
     }
+
+    return null;
+  };
+
+  const safeText = String(text || "").trim();
+  let lastMessage = null;
+
+  if (imageUrl) {
+    const [caption, remainingText] = splitCaptionText(safeText);
+    const remainingChunks = splitLongMessage(remainingText, 3500);
+
+    lastMessage = await sendPhotoSafely(caption || " ", remainingChunks.length === 0);
+
+    for (let i = 0; i < remainingChunks.length; i += 1) {
+      lastMessage = await sendMessageSafely(remainingChunks[i], i === remainingChunks.length - 1);
+    }
+
+    return lastMessage;
+  }
+
+  const chunks = splitLongMessage(safeText, 3500);
+
+  for (let i = 0; i < chunks.length; i += 1) {
+    lastMessage = await sendMessageSafely(chunks[i], i === chunks.length - 1);
   }
 
   return lastMessage;
@@ -4150,7 +4193,7 @@ async function notifySettlementUsers(matchData, orders, settlement) {
     const imageUrl = payout ? getLocalizedImageUrl(order.telegram_id, WINNER_IMAGE_URL, WINNER_IMAGE_URL_ZH) : getLocalizedImageUrl(order.telegram_id, LOSER_IMAGE_URL, LOSER_IMAGE_URL_ZH);
 
     try {
-      await sendOptionalPhoto(order.telegram_id, imageUrl, message);
+      await sendOptionalPhoto(order.telegram_id, imageUrl, message, getPrivateMatchesInlineKeyboard(order.telegram_id));
     } catch (error) {
       console.error(`Failed to notify settlement user ${order.telegram_id}:`, error.message);
     }
@@ -4308,7 +4351,7 @@ async function settleMatch(ctx, text) {
   const adminMessage = buildSettlementCompletedAdminMessage(matchData, settlement);
   const publicMessage = buildSettlementPublicMessage(matchData, settlement, finalCarryoverTotal);
 
-  const publicNotifyResult = await notifyPublicWorldCupTopicLong(publicMessage, MATCH_CANCELLED_IMAGE_URL);
+  const publicNotifyResult = await notifyPublicWorldCupTopicLong(publicMessage, MATCH_SETTLED_IMAGE_URL, buildPublicOrderConfirmedKeyboard());
   const adminFinalMessage = `${adminMessage}
 
 Public Topic Notification: ${publicNotifyResult ? "sent" : "failed or not configured"}`;
@@ -4436,6 +4479,7 @@ async function showMyVote(ctx) {
     .from("wc_orders")
     .select("*")
     .eq("telegram_id", ctx.from.id)
+    .neq("status", "voided")
     .order("created_at", { ascending: false })
     .limit(100);
 
