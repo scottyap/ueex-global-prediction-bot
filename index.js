@@ -108,6 +108,8 @@ const TELEGRAM_CAPTION_SAFE_LIMIT = 1000;
 const ADMIN_GROUP_CHAT_ID = process.env.ADMIN_GROUP_CHAT_ID || "";
 const PUBLIC_GROUP_CHAT_ID = process.env.PUBLIC_GROUP_CHAT_ID || process.env.PUBLIC_CHAT_ID || "";
 const PUBLIC_WORLD_CUP_TOPIC_ID = process.env.PUBLIC_WORLD_CUP_TOPIC_ID || process.env.WORLD_CUP_TOPIC_ID || "";
+const PUBLIC_GROUP_USERNAME = (process.env.PUBLIC_GROUP_USERNAME || process.env.PUBLIC_CHAT_USERNAME || "").replace(/^@/, "");
+const PUBLIC_WORLD_CUP_TOPIC_URL = process.env.PUBLIC_WORLD_CUP_TOPIC_URL || process.env.WORLD_CUP_TOPIC_URL || process.env.BROADCAST_TOPIC_URL || "";
 
 // v50: If a settled match has no exact-score winners, its net pool rolls over to the World Cup Final prize pool.
 // Set WORLDCUP_FINAL_MATCH_CODE after creating the final match for the safest targeting.
@@ -942,12 +944,12 @@ function getPrivateMainMenu(ctxOrLang = null) {
         ? [
             [{ text: "⚽ 比赛" }, { text: "📊 我的投票" }],
             [{ text: "🎮 玩法" }, { text: "📜 规则" }],
-            [{ text: "🛟 客服" }]
+            [{ text: "📣 播报群" }, { text: "🛟 客服" }]
           ]
         : [
             [{ text: "⚽ Matches" }, { text: "📊 My Vote" }],
             [{ text: "🎮 How to Play" }, { text: "📜 Rules" }],
-            [{ text: "🛟 Support" }]
+            [{ text: "📣 Announcement" }, { text: "🛟 Support" }]
           ],
       resize_keyboard: true,
       one_time_keyboard: false,
@@ -979,16 +981,59 @@ async function showLanguageSelection(ctx, pendingMatchCode = "") {
   return ctx.reply("🌐 Please select your language\n请选择语言", getLanguageKeyboard());
 }
 
-function getSupportKeyboard() {
-  return Markup.inlineKeyboard([
+function getPublicWorldCupTopicUrl() {
+  const configuredUrl = String(PUBLIC_WORLD_CUP_TOPIC_URL || "").trim();
+  if (configuredUrl) return configuredUrl;
+
+  const topicId = String(PUBLIC_WORLD_CUP_TOPIC_ID || "").trim();
+  if (!topicId) return null;
+
+  if (PUBLIC_GROUP_USERNAME) {
+    return `https://t.me/${PUBLIC_GROUP_USERNAME}/${topicId}`;
+  }
+
+  const rawChatId = String(PUBLIC_GROUP_CHAT_ID || "").trim();
+  if (!rawChatId) return null;
+
+  const internalChatId = rawChatId.startsWith("-100")
+    ? rawChatId.slice(4)
+    : rawChatId.startsWith("-")
+      ? rawChatId.slice(1)
+      : rawChatId;
+
+  if (!internalChatId) return null;
+
+  return `https://t.me/c/${internalChatId}/${topicId}`;
+}
+
+function getBroadcastTopicButton(ctxOrLang = null) {
+  const url = getPublicWorldCupTopicUrl();
+  if (!url) return null;
+
+  return Markup.button.url(isZh(ctxOrLang) ? "📣 播报群" : "📣 Announcement Topic", url);
+}
+
+function withBroadcastTopicRow(rows, ctxOrLang = null) {
+  const broadcastButton = getBroadcastTopicButton(ctxOrLang);
+  return broadcastButton ? [...rows, [broadcastButton]] : rows;
+}
+
+function getBroadcastTopicKeyboard(ctxOrLang = null) {
+  const broadcastButton = getBroadcastTopicButton(ctxOrLang);
+  if (!broadcastButton) return null;
+  return Markup.inlineKeyboard([[broadcastButton]]);
+}
+
+function getSupportKeyboard(ctxOrLang = null) {
+  return Markup.inlineKeyboard(withBroadcastTopicRow([
     [Markup.button.url("Contact @UEEx_JJ", "https://t.me/UEEx_JJ")]
-  ]);
+  ], ctxOrLang));
 }
 
 function getPrivateMatchesInlineKeyboard(ctxOrLang = null) {
-  return Markup.inlineKeyboard([
+  return Markup.inlineKeyboard(withBroadcastTopicRow([
     [Markup.button.callback(isZh(ctxOrLang) ? "⚽ 比赛" : "⚽ Matches", "wcgoto:matches")]
-  ]);
+  ], ctxOrLang));
 }
 
 function getRulesAcceptKeyboard(ctxOrLang = null) {
@@ -998,10 +1043,10 @@ function getRulesAcceptKeyboard(ctxOrLang = null) {
 }
 
 function getOrderCancelledKeyboard(ctxOrLang = null) {
-  return Markup.inlineKeyboard([
+  return Markup.inlineKeyboard(withBroadcastTopicRow([
     [Markup.button.url(isZh(ctxOrLang) ? "🛟 客服" : "🛟 Support", "https://t.me/UEEx_JJ")],
     [Markup.button.callback(isZh(ctxOrLang) ? "⚽ 比赛" : "⚽ Matches", "wcgoto:matches")]
-  ]);
+  ], ctxOrLang));
 }
 
 function hasAcceptedRules(ctx) {
@@ -1139,9 +1184,29 @@ async function showSupport(ctx) {
     ctx,
     getLocalizedImageUrl(ctx, SUPPORT_IMAGE_URL, SUPPORT_IMAGE_URL_ZH),
     isZh(ctx) ? "如需帮助，请联系 @UEEx_JJ。" : "🛟 Need help? Contact @UEEx_JJ for support.",
-    getPrivateMainMenu(ctx)
+    getSupportKeyboard(ctx)
   );
   return rememberPrivateMenuMessage(ctx, sent, "support");
+}
+
+async function showBroadcastTopic(ctx) {
+  const keyboard = getBroadcastTopicKeyboard(ctx);
+
+  if (!keyboard) {
+    return ctx.reply(
+      isZh(ctx)
+        ? "播报群 Topic 链接暂未配置，请联系 Admin。"
+        : "The announcement topic link is not configured yet. Please contact Admin.",
+      getPrivateMainMenu(ctx)
+    );
+  }
+
+  return ctx.reply(
+    isZh(ctx)
+      ? "📣 点击下方按钮进入世界杯播报群 Topic。"
+      : "📣 Tap below to open the World Cup announcement topic.",
+    keyboard
+  );
 }
 
 
@@ -5457,6 +5522,20 @@ bot.on("message", async (ctx) => {
       }
 
       return showHowToPlay(ctx);
+    }
+
+    if (isPrivateChat(ctx) && ["📣 Announcement", "Announcement", "announcement", "📣 Announcement Topic", "Announcement Topic", "announcement topic", "Broadcast", "broadcast", "📣 播报群", "播报群"].includes(cleaned)) {
+      clearSession(ctx);
+
+      if (!hasSelectedLanguage(ctx)) {
+        return showLanguageSelection(ctx);
+      }
+
+      if (!hasAcceptedRules(ctx)) {
+        return showStartRules(ctx);
+      }
+
+      return showBroadcastTopic(ctx);
     }
 
     if (isPrivateChat(ctx) && ["🛟 Support", "Support", "support", "Help", "help", "🛟 客服", "客服"].includes(cleaned)) {
