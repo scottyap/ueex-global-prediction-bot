@@ -21,6 +21,9 @@ const DEFAULT_CURRENCY = process.env.DEFAULT_CURRENCY || "UE";
 const PLATFORM_FEE_BPS = Number(process.env.PLATFORM_FEE_BPS || 500);
 const MAX_OPEN_MATCHES_SHOWN = Number(process.env.MAX_OPEN_MATCHES_SHOWN || 500);
 const LIVE_UPDATE_INTERVAL_MS = Number(process.env.LIVE_UPDATE_INTERVAL_MS || 30000);
+const MY_VOTE_PAGE_SIZE = Number(process.env.MY_VOTE_PAGE_SIZE || 3);
+const WINNERS_PAGE_SIZE = Number(process.env.WINNERS_PAGE_SIZE || 5);
+const LEADERBOARD_PAGE_SIZE = Number(process.env.LEADERBOARD_PAGE_SIZE || 10);
 const MIN_BET_AMOUNT = new Decimal(process.env.MIN_BET_AMOUNT || 1000);
 const BOT_USERNAME = (process.env.BOT_USERNAME || "").replace(/^@/, "");
 const AUTO_CONFIRM_ENABLED = String(process.env.AUTO_CONFIRM_ENABLED || "false").toLowerCase() === "true";
@@ -959,11 +962,13 @@ function getPrivateMainMenu(ctxOrLang = null) {
       keyboard: zh
         ? [
             [{ text: "⚽ 比赛" }, { text: "📊 我的投票" }],
+            [{ text: "🏆 历史赢家" }, { text: "📈 盈利榜" }],
             [{ text: "🎮 玩法" }, { text: "📜 规则" }],
             [{ text: "📣 播报群" }, { text: "🛟 客服" }]
           ]
         : [
             [{ text: "⚽ Matches" }, { text: "📊 My Vote" }],
+            [{ text: "🏆 Winners" }, { text: "📈 Leaderboard" }],
             [{ text: "🎮 How to Play" }, { text: "📜 Rules" }],
             [{ text: "📣 Announcement" }, { text: "🛟 Support" }]
           ],
@@ -4558,9 +4563,188 @@ function calculateOrderPnl(order, match, stats) {
 }
 
 
-async function showMyVote(ctx) {
+function getSafePageSize(value, fallback) {
+  const size = Number(value || fallback);
+  return Number.isFinite(size) && size > 0 ? Math.min(Math.max(Math.floor(size), 1), 20) : fallback;
+}
+
+function clampPage(page, totalPages) {
+  const parsed = Number(page || 1);
+  const safePage = Number.isFinite(parsed) ? Math.floor(parsed) : 1;
+  return Math.min(Math.max(safePage, 1), Math.max(totalPages || 1, 1));
+}
+
+function buildPaginationKeyboard(prefix, page, totalPages, ctxOrLang = null) {
+  const rows = [];
+  const row = [];
+  const zh = isZh(ctxOrLang);
+
+  if (page > 1) {
+    row.push(Markup.button.callback(zh ? "⬅️ 上一页" : "⬅️ Previous", `${prefix}:${page - 1}`));
+  }
+
+  if (page < totalPages) {
+    row.push(Markup.button.callback(zh ? "下一页 ➡️" : "Next ➡️", `${prefix}:${page + 1}`));
+  }
+
+  if (row.length) rows.push(row);
+  return rows.length ? Markup.inlineKeyboard(rows) : undefined;
+}
+
+async function replyOrEditDataPage(ctx, text, keyboard = undefined, edit = false, category = "data") {
+  if (edit && ctx.editMessageText) {
+    return ctx.editMessageText(text, keyboard || undefined);
+  }
+
   if (isPrivateChat(ctx)) {
-    await deleteLastPrivateMenuMessage(ctx, "myvote");
+    await deleteLastPrivateMenuMessage(ctx, category);
+  }
+
+  const sent = await ctx.reply(text, keyboard || undefined);
+  return rememberPrivateMenuMessage(ctx, sent, category);
+}
+
+async function loadMatchesByCodes(matchCodes) {
+  if (!matchCodes.length) return [];
+
+  const { data, error } = await supabase
+    .from("wc_matches")
+    .select("*")
+    .in("match_code", matchCodes);
+
+  if (error) {
+    throw new Error(`Failed to load matches: ${error.message}`);
+  }
+
+  return data || [];
+}
+
+async function loadSettledPredictionStats() {
+  const { data: matches, error: matchError } = await supabase
+    .from("wc_matches")
+    .select("*")
+    .eq("status", "settled")
+    .not("result", "is", null)
+    .order("updated_at", { ascending: false })
+    .limit(500);
+
+  if (matchError) {
+    throw new Error(`Failed to load settled matches: ${matchError.message}`);
+  }
+
+  const settledMatches = matches || [];
+  const matchCodes = settledMatches.map((match) => match.match_code).filter(Boolean);
+
+  if (!matchCodes.length) {
+    return {
+      matches: [],
+      matchMap: new Map(),
+      orders: [],
+      statsMap: new Map(),
+      winnerRows: [],
+      leaderboardRows: []
+    };
+  }
+
+  const confirmedOrders = await getConfirmedOrdersForMatches(matchCodes);
+  const matchMap = new Map(settledMatches.map((match) => [match.match_code, match]));
+  const statsMap = buildMatchStatsMap(settledMatches, confirmedOrders);
+  await applyFinalCarryoversToStatsMap(settledMatches, statsMap);
+
+  const winnerRows = [];
+  const leaderboardMap = new Map();
+
+  for (const order of confirmedOrders) {
+    const match = matchMap.get(order.match_code);
+    const stats = statsMap.get(order.match_code);
+    if (!match || !stats) continue;
+
+    const amount = new Decimal(order.confirmed_amount || 0);
+    const payoutAmount = order.selection === match.result && stats.winningPool.gt(0)
+      ? amount.div(stats.winningPool).mul(stats.netPool)
+      : new Decimal(0);
+    const pnl = payoutAmount.minus(amount);
+    const key = String(order.telegram_id || order.ueex_uid || order.username || "unknown");
+
+    if (!leaderboardMap.has(key)) {
+      leaderboardMap.set(key, {
+        telegramId: order.telegram_id,
+        ueexUid: order.ueex_uid,
+        username: order.username,
+        first_name: order.first_name,
+        last_name: order.last_name,
+        totalBet: new Decimal(0),
+        totalPayout: new Decimal(0),
+        profit: new Decimal(0),
+        wins: 0,
+        orders: 0,
+        currency: order.currency || match.currency || DEFAULT_CURRENCY
+      });
+    }
+
+    const row = leaderboardMap.get(key);
+    row.totalBet = row.totalBet.plus(amount);
+    row.totalPayout = row.totalPayout.plus(payoutAmount);
+    row.profit = row.profit.plus(pnl);
+    row.orders += 1;
+    if (payoutAmount.gt(0)) row.wins += 1;
+
+    if (payoutAmount.gt(0)) {
+      winnerRows.push({
+        order,
+        match,
+        stats,
+        amount,
+        payoutAmount,
+        profit: pnl,
+        currency: order.currency || match.currency || DEFAULT_CURRENCY,
+        settledAt: new Date(match.updated_at || match.created_at || 0).getTime() || 0
+      });
+    }
+  }
+
+  winnerRows.sort((a, b) => b.settledAt - a.settledAt || String(b.order.confirmed_at || "").localeCompare(String(a.order.confirmed_at || "")));
+
+  const leaderboardRows = [...leaderboardMap.values()]
+    .filter((row) => row.totalBet.gt(0))
+    .sort((a, b) => {
+      const profitDiff = b.profit.minus(a.profit);
+      if (!profitDiff.isZero()) return profitDiff.gt(0) ? 1 : -1;
+      const payoutDiff = b.totalPayout.minus(a.totalPayout);
+      if (!payoutDiff.isZero()) return payoutDiff.gt(0) ? 1 : -1;
+      return b.wins - a.wins;
+    });
+
+  return {
+    matches: settledMatches,
+    matchMap,
+    orders: confirmedOrders,
+    statsMap,
+    winnerRows,
+    leaderboardRows
+  };
+}
+
+function getStatsUserLabel(rowOrOrder, fallback = "User") {
+  if (rowOrOrder?.username) return `@${rowOrOrder.username}`;
+  const name = [rowOrOrder?.first_name, rowOrOrder?.last_name].filter(Boolean).join(" ");
+  if (name) return name;
+  if (rowOrOrder?.ueexUid) return `UID ${rowOrOrder.ueexUid}`;
+  if (rowOrOrder?.ueex_uid) return `UID ${rowOrOrder.ueex_uid}`;
+  if (rowOrOrder?.telegramId) return `TG ${rowOrOrder.telegramId}`;
+  if (rowOrOrder?.telegram_id) return `TG ${rowOrOrder.telegram_id}`;
+  return fallback;
+}
+
+function formatProfit(value, currency) {
+  const decimal = new Decimal(value || 0);
+  const sign = decimal.gte(0) ? "+" : "";
+  return `${sign}${formatAmount(decimal)} ${currency}`;
+}
+
+async function showMyVote(ctx, page = 1, edit = false) {
+  if (!isPrivateChat(ctx)) {
+    return ctx.reply("Please check your vote details in private chat with the bot.");
   }
 
   const { data: orders, error } = await supabase
@@ -4569,30 +4753,18 @@ async function showMyVote(ctx) {
     .eq("telegram_id", ctx.from.id)
     .neq("status", "voided")
     .order("created_at", { ascending: false })
-    .limit(100);
+    .limit(500);
 
   if (error) {
-    const sent = await ctx.reply(`${isZh(ctx) ? "加载投票记录失败" : "Failed to load your votes"}: ${error.message}`, getPrivateMainMenu(ctx));
-    return rememberPrivateMenuMessage(ctx, sent, "myvote");
+    return replyOrEditDataPage(ctx, `${isZh(ctx) ? "加载投票记录失败" : "Failed to load your votes"}: ${error.message}`, undefined, edit, "myvote");
   }
 
   if (!orders || orders.length === 0) {
-    const sent = await replyWithOptionalPhoto(ctx, getLocalizedImageUrl(ctx, MYVOTE_IMAGE_URL, MYVOTE_IMAGE_URL_ZH), isZh(ctx) ? "你还没有世界杯预测订单。" : "You have no World Cup prediction orders yet.", getPrivateMainMenu(ctx));
-    return rememberPrivateMenuMessage(ctx, sent, "myvote");
+    return replyOrEditDataPage(ctx, isZh(ctx) ? "📊 我的投票\n\n你还没有世界杯预测订单。" : "📊 My Vote\n\nYou have no World Cup prediction orders yet.", undefined, edit, "myvote");
   }
 
-  const matchCodes = [...new Set(orders.map((order) => order.match_code))];
-
-  const { data: matches, error: matchError } = await supabase
-    .from("wc_matches")
-    .select("*")
-    .in("match_code", matchCodes);
-
-  if (matchError) {
-    const sent = await ctx.reply(`${isZh(ctx) ? "加载比赛信息失败" : "Failed to load matches"}: ${matchError.message}`, getPrivateMainMenu(ctx));
-    return rememberPrivateMenuMessage(ctx, sent, "myvote");
-  }
-
+  const matchCodes = [...new Set(orders.map((order) => order.match_code).filter(Boolean))];
+  const matches = await loadMatchesByCodes(matchCodes);
   const confirmedOrders = await getConfirmedOrdersForMatches(matchCodes);
   const matchMap = new Map((matches || []).map((match) => [match.match_code, match]));
   const statsMap = buildMatchStatsMap(matches || [], confirmedOrders);
@@ -4601,96 +4773,131 @@ async function showMyVote(ctx) {
   let totalVoteAmount = new Decimal(0);
   let totalPnlAmount = new Decimal(0);
   let hasSettledPnl = false;
+  let confirmedCount = 0;
+  let pendingCount = 0;
 
-  const lines = orders.map((order, index) => {
+  for (const order of orders) {
     const match = matchMap.get(order.match_code);
     const stats = statsMap.get(order.match_code);
-    const matchTitle = match ? `${formatTeamWithFlag(match.team_a)} vs ${formatTeamWithFlag(match.team_b)}` : order.match_code;
-    const selection = match ? formatSelectionWithFlags(match, order.selection, ctx) : order.selection;
     const amount = order.status === "confirmed" ? order.confirmed_amount : order.expected_amount;
     const amountDecimal = new Decimal(amount || 0);
-    const totalPool = stats ? stats.totalPool : new Decimal(0);
-    const carryoverTotal = stats?.carryoverTotal || new Decimal(0);
-    const carryoverLine = carryoverTotal.gt(0)
-      ? (isZh(ctx) ? `
-🔸 总决赛累计奖池: ${formatAmount(carryoverTotal)} ${order.currency}` : `
-🔸 Final Carryover Pool: ${formatAmount(carryoverTotal)} ${order.currency}`)
-      : "";
-    const resultDisplay = getMatchResultDisplay(match, ctx);
-    const pnl = calculateOrderPnl(order, match, stats);
     const pnlValue = calculateOrderPnlValue(order, match, stats);
-    const orderStatus = isZh(ctx) ? (order.status === "confirmed" ? "已确认" : order.status === "pending" ? "待确认" : order.status) : (order.status === "confirmed" ? "Confirmed" : order.status === "pending" ? "Pending" : order.status);
+
+    if (order.status === "confirmed") confirmedCount += 1;
+    if (order.status === "pending") pendingCount += 1;
 
     if (["pending", "confirmed"].includes(order.status)) {
       totalVoteAmount = totalVoteAmount.plus(amountDecimal);
     }
 
-    if (pnlValue) {
+    if (pnlValue !== null) {
       totalPnlAmount = totalPnlAmount.plus(pnlValue);
       hasSettledPnl = true;
     }
+  }
+
+  const pageSize = getSafePageSize(MY_VOTE_PAGE_SIZE, 3);
+  const totalPages = Math.max(Math.ceil(orders.length / pageSize), 1);
+  const safePage = clampPage(page, totalPages);
+  const pageOrders = orders.slice((safePage - 1) * pageSize, safePage * pageSize);
+  const currency = orders[0]?.currency || DEFAULT_CURRENCY;
+  const totalPnlText = hasSettledPnl ? formatProfit(totalPnlAmount, currency) : `0 ${currency}`;
+
+  const lines = pageOrders.map((order, index) => {
+    const match = matchMap.get(order.match_code);
+    const stats = statsMap.get(order.match_code);
+    const displayIndex = (safePage - 1) * pageSize + index + 1;
+    const matchTitle = match ? `${formatTeamWithFlag(match.team_a)} vs ${formatTeamWithFlag(match.team_b)}` : order.match_code;
+    const selection = match ? formatSelectionWithFlags(match, order.selection, ctx) : order.selection;
+    const amount = order.status === "confirmed" ? order.confirmed_amount : order.expected_amount;
+    const totalPool = stats ? stats.totalPool : new Decimal(0);
+    const carryoverTotal = stats?.carryoverTotal || new Decimal(0);
+    const carryoverLine = carryoverTotal.gt(0)
+      ? (isZh(ctx) ? `\n🔸 总决赛累计奖池: ${formatAmount(carryoverTotal)} ${order.currency}` : `\n🔸 Final Carryover Pool: ${formatAmount(carryoverTotal)} ${order.currency}`)
+      : "";
+    const resultDisplay = getMatchResultDisplay(match, ctx);
+    const pnl = calculateOrderPnl(order, match, stats);
+    const orderStatus = isZh(ctx)
+      ? (order.status === "confirmed" ? "已确认" : order.status === "pending" ? "待确认" : order.status)
+      : (order.status === "confirmed" ? "Confirmed" : order.status === "pending" ? "Pending" : order.status);
 
     if (isZh(ctx)) {
-      return `${index + 1}. ${matchTitle}
-🔸 比赛 ID: ${order.match_code}
-🔸 订单: ${order.order_code}
-🔸 选择: ${selection}
-🔸 金额: ${formatAmount(amount)} ${order.currency}
-🔸 总奖池: ${formatAmount(totalPool)} ${order.currency}${carryoverLine}
-🔸 订单状态: ${orderStatus}
-🔸 比赛赛果: ${resultDisplay}
-🔸 总盈亏: ${pnl}`;
+      return `${displayIndex}. ${matchTitle}\n🔸 比赛 ID: ${order.match_code}\n🔸 订单: ${order.order_code}\n🔸 选择: ${selection}\n🔸 金额: ${formatAmount(amount)} ${order.currency}\n🔸 总奖池: ${formatAmount(totalPool)} ${order.currency}${carryoverLine}\n🔸 订单状态: ${orderStatus}\n🔸 比赛赛果: ${resultDisplay}\n🔸 总盈亏: ${pnl}`;
     }
 
-    return `${index + 1}. ${matchTitle}
-🔸 Match ID: ${order.match_code}
-🔸 Order: ${order.order_code}
-🔸 Selection: ${selection}
-🔸 Amount: ${formatAmount(amount)} ${order.currency}
-🔸 Total Pool: ${formatAmount(totalPool)} ${order.currency}${carryoverLine}
-🔸 Order Status: ${orderStatus}
-🔸 Game Result: ${resultDisplay}
-🔸 Total PnL: ${pnl}`;
+    return `${displayIndex}. ${matchTitle}\n🔸 Match ID: ${order.match_code}\n🔸 Order: ${order.order_code}\n🔸 Selection: ${selection}\n🔸 Amount: ${formatAmount(amount)} ${order.currency}\n🔸 Total Pool: ${formatAmount(totalPool)} ${order.currency}${carryoverLine}\n🔸 Order Status: ${orderStatus}\n🔸 Game Result: ${resultDisplay}\n🔸 Total PnL: ${pnl}`;
   });
 
-  const currency = orders[0]?.currency || DEFAULT_CURRENCY;
-  const totalPnlText = hasSettledPnl
-    ? `${totalPnlAmount.gte(0) ? "+" : ""}${formatAmount(totalPnlAmount)} ${currency}`
-    : `0 ${currency}`;
+  const body = isZh(ctx)
+    ? `📊 我的投票\n\n订单: ${orders.length} | 已确认: ${confirmedCount} | 待确认: ${pendingCount}\n💰 总投票金额: ${formatAmount(totalVoteAmount)} ${currency}\n💎 总盈亏: ${totalPnlText}\n\n第 ${safePage} / ${totalPages} 页\n\n${lines.join("\n\n")}`
+    : `📊 My Vote\n\nOrders: ${orders.length} | Confirmed: ${confirmedCount} | Pending: ${pendingCount}\n💰 Total Vote Amount: ${formatAmount(totalVoteAmount)} ${currency}\n💎 Total PnL: ${totalPnlText}\n\nPage ${safePage} / ${totalPages}\n\n${lines.join("\n\n")}`;
 
-  const body = isZh(ctx) ? `${lines.join("\n\n")}\n\n💰 总投票金额: ${formatAmount(totalVoteAmount)} ${currency}\n💎 总盈亏: ${totalPnlText}` : `${lines.join("\n\n")}\n\n💰 Total Vote Amount: ${formatAmount(totalVoteAmount)} ${currency}\n💎 Total PnL: ${totalPnlText}`;
+  return replyOrEditDataPage(ctx, body, buildPaginationKeyboard("wcmyvote", safePage, totalPages, ctx), edit, "myvote");
+}
 
-  const sentMessages = [];
-  const imageUrl = getLocalizedImageUrl(ctx, MYVOTE_IMAGE_URL, MYVOTE_IMAGE_URL_ZH);
+async function showRecentWinners(ctx, page = 1, edit = false) {
+  const { winnerRows } = await loadSettledPredictionStats();
 
-  if (imageUrl) {
-    const [caption, remainingText] = splitCaptionText(body);
-    const photo = await ctx.replyWithPhoto(
-      imageUrl,
-      buildPhotoExtra(caption, remainingText ? null : getPrivateMainMenu(ctx))
-    );
-    sentMessages.push(photo);
+  if (!winnerRows.length) {
+    return replyOrEditDataPage(ctx, isZh(ctx) ? "🏆 历史赢家\n\n目前还没有已结算的中奖记录。" : "🏆 Recent Winners\n\nNo settled winner records yet.", undefined, edit, "winners");
+  }
 
-    if (remainingText) {
-      const chunks = splitLongMessage(remainingText, 3500);
-      for (let i = 0; i < chunks.length; i += 1) {
-        const options = i === chunks.length - 1 ? getPrivateMainMenu(ctx) : undefined;
-        const sent = await ctx.reply(chunks[i], options);
-        sentMessages.push(sent);
-      }
+  const pageSize = getSafePageSize(WINNERS_PAGE_SIZE, 5);
+  const totalPages = Math.max(Math.ceil(winnerRows.length / pageSize), 1);
+  const safePage = clampPage(page, totalPages);
+  const pageRows = winnerRows.slice((safePage - 1) * pageSize, safePage * pageSize);
+
+  const lines = pageRows.map((row, index) => {
+    const displayIndex = (safePage - 1) * pageSize + index + 1;
+    const user = getStatsUserLabel(row.order, `Winner #${displayIndex}`);
+    const matchTitle = `${formatTeamWithFlag(row.match.team_a)} vs ${formatTeamWithFlag(row.match.team_b)}`;
+    const result = formatSelectionWithFlags(row.match, row.match.result, ctx);
+    const selection = formatSelectionWithFlags(row.match, row.order.selection, ctx);
+
+    if (isZh(ctx)) {
+      return `${displayIndex}. ${matchTitle}\n🔸 赢家: ${user}\n🔸 赛果: ${result}\n🔸 选择: ${selection}\n🔸 投票: ${formatAmount(row.amount)} ${row.currency}\n🔸 奖励: ${formatAmount(row.payoutAmount)} ${row.currency}\n🔸 盈利: ${formatProfit(row.profit, row.currency)}`;
     }
 
-    return rememberPrivateMenuMessages(ctx, sentMessages, "myvote");
+    return `${displayIndex}. ${matchTitle}\n🔸 Winner: ${user}\n🔸 Result: ${result}\n🔸 Pick: ${selection}\n🔸 Vote: ${formatAmount(row.amount)} ${row.currency}\n🔸 Payout: ${formatAmount(row.payoutAmount)} ${row.currency}\n🔸 Profit: ${formatProfit(row.profit, row.currency)}`;
+  });
+
+  const body = isZh(ctx)
+    ? `🏆 历史赢家\n\n仅统计已结算比赛。\n第 ${safePage} / ${totalPages} 页\n\n${lines.join("\n\n")}`
+    : `🏆 Recent Winners\n\nSettled matches only.\nPage ${safePage} / ${totalPages}\n\n${lines.join("\n\n")}`;
+
+  return replyOrEditDataPage(ctx, body, buildPaginationKeyboard("wcwinners", safePage, totalPages, ctx), edit, "winners");
+}
+
+async function showProfitLeaderboard(ctx, page = 1, edit = false) {
+  const { leaderboardRows } = await loadSettledPredictionStats();
+
+  if (!leaderboardRows.length) {
+    return replyOrEditDataPage(ctx, isZh(ctx) ? "📈 盈利榜\n\n目前还没有已结算的盈利数据。" : "📈 Profit Leaderboard\n\nNo settled profit data yet.", undefined, edit, "leaderboard");
   }
 
-  const chunks = splitLongMessage(body, 3500);
-  for (let i = 0; i < chunks.length; i += 1) {
-    const options = i === chunks.length - 1 ? getPrivateMainMenu(ctx) : undefined;
-    const sent = await ctx.reply(chunks[i], options);
-    sentMessages.push(sent);
-  }
+  const pageSize = getSafePageSize(LEADERBOARD_PAGE_SIZE, 10);
+  const totalPages = Math.max(Math.ceil(leaderboardRows.length / pageSize), 1);
+  const safePage = clampPage(page, totalPages);
+  const pageRows = leaderboardRows.slice((safePage - 1) * pageSize, safePage * pageSize);
 
-  return rememberPrivateMenuMessages(ctx, sentMessages, "myvote");
+  const lines = pageRows.map((row, index) => {
+    const displayIndex = (safePage - 1) * pageSize + index + 1;
+    const user = getStatsUserLabel(row, `User #${displayIndex}`);
+    const roi = row.totalBet.gt(0) ? row.profit.div(row.totalBet).mul(100) : new Decimal(0);
+    const roiText = `${roi.gte(0) ? "+" : ""}${formatAmount(roi, 2)}%`;
+
+    if (isZh(ctx)) {
+      return `${displayIndex}. ${user}\n🔸 总投注: ${formatAmount(row.totalBet)} ${row.currency}\n🔸 总奖励: ${formatAmount(row.totalPayout)} ${row.currency}\n🔸 净盈利: ${formatProfit(row.profit, row.currency)}\n🔸 ROI: ${roiText}\n🔸 中奖次数: ${row.wins}`;
+    }
+
+    return `${displayIndex}. ${user}\n🔸 Total Bet: ${formatAmount(row.totalBet)} ${row.currency}\n🔸 Total Payout: ${formatAmount(row.totalPayout)} ${row.currency}\n🔸 Net Profit: ${formatProfit(row.profit, row.currency)}\n🔸 ROI: ${roiText}\n🔸 Wins: ${row.wins}`;
+  });
+
+  const body = isZh(ctx)
+    ? `📈 盈利榜\n\n仅统计已结算比赛，不包含已取消订单。\n第 ${safePage} / ${totalPages} 页\n\n${lines.join("\n\n")}`
+    : `📈 Profit Leaderboard\n\nSettled matches only. Cancelled orders excluded.\nPage ${safePage} / ${totalPages}\n\n${lines.join("\n\n")}`;
+
+  return replyOrEditDataPage(ctx, body, buildPaginationKeyboard("wcleaderboard", safePage, totalPages, ctx), edit, "leaderboard");
 }
 
 async function showPendingOrders(ctx, matchCode = null) {
@@ -5162,9 +5369,86 @@ bot.command("myvote", async (ctx) => {
   }
 });
 
+bot.command("winners", async (ctx) => {
+  try {
+    if (!isPrivateChat(ctx)) {
+      const url = BOT_USERNAME ? `https://t.me/${BOT_USERNAME}` : null;
+      const keyboard = url ? Markup.inlineKeyboard([[Markup.button.url("Open Bot", url)]]) : undefined;
+      const msg = await ctx.reply("Please check winners in private chat with the bot.", keyboard);
+
+      if (ctx.chat?.id && ctx.message?.message_id) {
+        scheduleDeleteMessage(ctx.chat.id, ctx.message.message_id, 10000);
+      }
+
+      if (ctx.chat?.id && msg?.message_id) {
+        scheduleDeleteMessage(ctx.chat.id, msg.message_id, 10000);
+      }
+
+      return;
+    }
+
+    await showRecentWinners(ctx);
+  } catch (error) {
+    console.error("Winners error:", error);
+    await ctx.reply(`Error: ${error.message}`);
+  }
+});
+
+bot.command("leaderboard", async (ctx) => {
+  try {
+    if (!isPrivateChat(ctx)) {
+      const url = BOT_USERNAME ? `https://t.me/${BOT_USERNAME}` : null;
+      const keyboard = url ? Markup.inlineKeyboard([[Markup.button.url("Open Bot", url)]]) : undefined;
+      const msg = await ctx.reply("Please check the leaderboard in private chat with the bot.", keyboard);
+
+      if (ctx.chat?.id && ctx.message?.message_id) {
+        scheduleDeleteMessage(ctx.chat.id, ctx.message.message_id, 10000);
+      }
+
+      if (ctx.chat?.id && msg?.message_id) {
+        scheduleDeleteMessage(ctx.chat.id, msg.message_id, 10000);
+      }
+
+      return;
+    }
+
+    await showProfitLeaderboard(ctx);
+  } catch (error) {
+    console.error("Leaderboard error:", error);
+    await ctx.reply(`Error: ${error.message}`);
+  }
+});
+
 bot.on("callback_query", async (ctx) => {
   try {
     const data = ctx.callbackQuery?.data || "";
+
+    if (data.startsWith("wcmyvote:")) {
+      if (!isPrivateChat(ctx)) {
+        return ctx.answerCbQuery("Please use private chat with the bot.", { show_alert: true });
+      }
+
+      await ctx.answerCbQuery();
+      return showMyVote(ctx, data.split(":")[1] || 1, true);
+    }
+
+    if (data.startsWith("wcwinners:")) {
+      if (!isPrivateChat(ctx)) {
+        return ctx.answerCbQuery("Please use private chat with the bot.", { show_alert: true });
+      }
+
+      await ctx.answerCbQuery();
+      return showRecentWinners(ctx, data.split(":")[1] || 1, true);
+    }
+
+    if (data.startsWith("wcleaderboard:")) {
+      if (!isPrivateChat(ctx)) {
+        return ctx.answerCbQuery("Please use private chat with the bot.", { show_alert: true });
+      }
+
+      await ctx.answerCbQuery();
+      return showProfitLeaderboard(ctx, data.split(":")[1] || 1, true);
+    }
 
     if (data.startsWith("wclang:")) {
       if (!isPrivateChat(ctx)) {
@@ -5590,6 +5874,34 @@ bot.on("message", async (ctx) => {
       }
 
       return showMyVote(ctx);
+    }
+
+    if (isPrivateChat(ctx) && ["🏆 Winners", "Winners", "winners", "Recent Winners", "recent winners", "🏆 历史赢家", "历史赢家"].includes(cleaned)) {
+      clearSession(ctx);
+
+      if (!hasSelectedLanguage(ctx)) {
+        return showLanguageSelection(ctx);
+      }
+
+      if (!hasAcceptedRules(ctx)) {
+        return showStartRules(ctx);
+      }
+
+      return showRecentWinners(ctx);
+    }
+
+    if (isPrivateChat(ctx) && ["📈 Leaderboard", "Leaderboard", "leaderboard", "Profit Leaderboard", "profit leaderboard", "📈 盈利榜", "盈利榜"].includes(cleaned)) {
+      clearSession(ctx);
+
+      if (!hasSelectedLanguage(ctx)) {
+        return showLanguageSelection(ctx);
+      }
+
+      if (!hasAcceptedRules(ctx)) {
+        return showStartRules(ctx);
+      }
+
+      return showProfitLeaderboard(ctx);
     }
 
     if (cleaned.startsWith("/")) return;
