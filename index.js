@@ -23,7 +23,6 @@ const MAX_OPEN_MATCHES_SHOWN = Number(process.env.MAX_OPEN_MATCHES_SHOWN || 500)
 const LIVE_UPDATE_INTERVAL_MS = Number(process.env.LIVE_UPDATE_INTERVAL_MS || 30000);
 const MY_VOTE_PAGE_SIZE = Number(process.env.MY_VOTE_PAGE_SIZE || 3);
 const WINNERS_PAGE_SIZE = Number(process.env.WINNERS_PAGE_SIZE || 5);
-const LEADERBOARD_PAGE_SIZE = Number(process.env.LEADERBOARD_PAGE_SIZE || 10);
 const MIN_BET_AMOUNT = new Decimal(process.env.MIN_BET_AMOUNT || 1000);
 const BOT_USERNAME = (process.env.BOT_USERNAME || "").replace(/^@/, "");
 const AUTO_CONFIRM_ENABLED = String(process.env.AUTO_CONFIRM_ENABLED || "false").toLowerCase() === "true";
@@ -962,13 +961,13 @@ function getPrivateMainMenu(ctxOrLang = null) {
       keyboard: zh
         ? [
             [{ text: "⚽ 比赛" }, { text: "📊 我的投票" }],
-            [{ text: "🏆 历史赢家" }, { text: "📈 盈利榜" }],
+            [{ text: "🏆 历史赢家" }],
             [{ text: "🎮 玩法" }, { text: "📜 规则" }],
             [{ text: "📣 播报群" }, { text: "🛟 客服" }]
           ]
         : [
             [{ text: "⚽ Matches" }, { text: "📊 My Vote" }],
-            [{ text: "🏆 Winners" }, { text: "📈 Leaderboard" }],
+            [{ text: "🏆 Winners" }],
             [{ text: "🎮 How to Play" }, { text: "📜 Rules" }],
             [{ text: "📣 Announcement" }, { text: "🛟 Support" }]
           ],
@@ -4641,8 +4640,7 @@ async function loadSettledPredictionStats() {
       matchMap: new Map(),
       orders: [],
       statsMap: new Map(),
-      winnerRows: [],
-      leaderboardRows: []
+      winnerRows: []
     };
   }
 
@@ -4652,7 +4650,6 @@ async function loadSettledPredictionStats() {
   await applyFinalCarryoversToStatsMap(settledMatches, statsMap);
 
   const winnerRows = [];
-  const leaderboardMap = new Map();
 
   for (const order of confirmedOrders) {
     const match = matchMap.get(order.match_code);
@@ -4664,31 +4661,6 @@ async function loadSettledPredictionStats() {
       ? amount.div(stats.winningPool).mul(stats.netPool)
       : new Decimal(0);
     const pnl = payoutAmount.minus(amount);
-    const key = String(order.telegram_id || order.ueex_uid || order.username || "unknown");
-
-    if (!leaderboardMap.has(key)) {
-      leaderboardMap.set(key, {
-        telegramId: order.telegram_id,
-        ueexUid: order.ueex_uid,
-        username: order.username,
-        first_name: order.first_name,
-        last_name: order.last_name,
-        totalBet: new Decimal(0),
-        totalPayout: new Decimal(0),
-        profit: new Decimal(0),
-        wins: 0,
-        orders: 0,
-        currency: order.currency || match.currency || DEFAULT_CURRENCY
-      });
-    }
-
-    const row = leaderboardMap.get(key);
-    row.totalBet = row.totalBet.plus(amount);
-    row.totalPayout = row.totalPayout.plus(payoutAmount);
-    row.profit = row.profit.plus(pnl);
-    row.orders += 1;
-    if (payoutAmount.gt(0)) row.wins += 1;
-
     if (payoutAmount.gt(0)) {
       winnerRows.push({
         order,
@@ -4705,23 +4677,13 @@ async function loadSettledPredictionStats() {
 
   winnerRows.sort((a, b) => b.settledAt - a.settledAt || String(b.order.confirmed_at || "").localeCompare(String(a.order.confirmed_at || "")));
 
-  const leaderboardRows = [...leaderboardMap.values()]
-    .filter((row) => row.totalBet.gt(0))
-    .sort((a, b) => {
-      const profitDiff = b.profit.minus(a.profit);
-      if (!profitDiff.isZero()) return profitDiff.gt(0) ? 1 : -1;
-      const payoutDiff = b.totalPayout.minus(a.totalPayout);
-      if (!payoutDiff.isZero()) return payoutDiff.gt(0) ? 1 : -1;
-      return b.wins - a.wins;
-    });
 
   return {
     matches: settledMatches,
     matchMap,
     orders: confirmedOrders,
     statsMap,
-    winnerRows,
-    leaderboardRows
+    winnerRows
   };
 }
 
@@ -4866,38 +4828,6 @@ async function showRecentWinners(ctx, page = 1, edit = false) {
     : `🏆 Recent Winners\n\nSettled matches only.\nPage ${safePage} / ${totalPages}\n\n${lines.join("\n\n")}`;
 
   return replyOrEditDataPage(ctx, body, buildPaginationKeyboard("wcwinners", safePage, totalPages, ctx), edit, "winners");
-}
-
-async function showProfitLeaderboard(ctx, page = 1, edit = false) {
-  const { leaderboardRows } = await loadSettledPredictionStats();
-
-  if (!leaderboardRows.length) {
-    return replyOrEditDataPage(ctx, isZh(ctx) ? "📈 盈利榜\n\n目前还没有已结算的盈利数据。" : "📈 Profit Leaderboard\n\nNo settled profit data yet.", undefined, edit, "leaderboard");
-  }
-
-  const pageSize = getSafePageSize(LEADERBOARD_PAGE_SIZE, 10);
-  const totalPages = Math.max(Math.ceil(leaderboardRows.length / pageSize), 1);
-  const safePage = clampPage(page, totalPages);
-  const pageRows = leaderboardRows.slice((safePage - 1) * pageSize, safePage * pageSize);
-
-  const lines = pageRows.map((row, index) => {
-    const displayIndex = (safePage - 1) * pageSize + index + 1;
-    const user = getStatsUserLabel(row, `User #${displayIndex}`);
-    const roi = row.totalBet.gt(0) ? row.profit.div(row.totalBet).mul(100) : new Decimal(0);
-    const roiText = `${roi.gte(0) ? "+" : ""}${formatAmount(roi, 2)}%`;
-
-    if (isZh(ctx)) {
-      return `${displayIndex}. ${user}\n🔸 总投注: ${formatAmount(row.totalBet)} ${row.currency}\n🔸 总奖励: ${formatAmount(row.totalPayout)} ${row.currency}\n🔸 净盈利: ${formatProfit(row.profit, row.currency)}\n🔸 ROI: ${roiText}\n🔸 中奖次数: ${row.wins}`;
-    }
-
-    return `${displayIndex}. ${user}\n🔸 Total Bet: ${formatAmount(row.totalBet)} ${row.currency}\n🔸 Total Payout: ${formatAmount(row.totalPayout)} ${row.currency}\n🔸 Net Profit: ${formatProfit(row.profit, row.currency)}\n🔸 ROI: ${roiText}\n🔸 Wins: ${row.wins}`;
-  });
-
-  const body = isZh(ctx)
-    ? `📈 盈利榜\n\n仅统计已结算比赛，不包含已取消订单。\n第 ${safePage} / ${totalPages} 页\n\n${lines.join("\n\n")}`
-    : `📈 Profit Leaderboard\n\nSettled matches only. Cancelled orders excluded.\nPage ${safePage} / ${totalPages}\n\n${lines.join("\n\n")}`;
-
-  return replyOrEditDataPage(ctx, body, buildPaginationKeyboard("wcleaderboard", safePage, totalPages, ctx), edit, "leaderboard");
 }
 
 async function showPendingOrders(ctx, matchCode = null) {
@@ -5394,31 +5324,6 @@ bot.command("winners", async (ctx) => {
   }
 });
 
-bot.command("leaderboard", async (ctx) => {
-  try {
-    if (!isPrivateChat(ctx)) {
-      const url = BOT_USERNAME ? `https://t.me/${BOT_USERNAME}` : null;
-      const keyboard = url ? Markup.inlineKeyboard([[Markup.button.url("Open Bot", url)]]) : undefined;
-      const msg = await ctx.reply("Please check the leaderboard in private chat with the bot.", keyboard);
-
-      if (ctx.chat?.id && ctx.message?.message_id) {
-        scheduleDeleteMessage(ctx.chat.id, ctx.message.message_id, 10000);
-      }
-
-      if (ctx.chat?.id && msg?.message_id) {
-        scheduleDeleteMessage(ctx.chat.id, msg.message_id, 10000);
-      }
-
-      return;
-    }
-
-    await showProfitLeaderboard(ctx);
-  } catch (error) {
-    console.error("Leaderboard error:", error);
-    await ctx.reply(`Error: ${error.message}`);
-  }
-});
-
 bot.on("callback_query", async (ctx) => {
   try {
     const data = ctx.callbackQuery?.data || "";
@@ -5441,14 +5346,6 @@ bot.on("callback_query", async (ctx) => {
       return showRecentWinners(ctx, data.split(":")[1] || 1, true);
     }
 
-    if (data.startsWith("wcleaderboard:")) {
-      if (!isPrivateChat(ctx)) {
-        return ctx.answerCbQuery("Please use private chat with the bot.", { show_alert: true });
-      }
-
-      await ctx.answerCbQuery();
-      return showProfitLeaderboard(ctx, data.split(":")[1] || 1, true);
-    }
 
     if (data.startsWith("wclang:")) {
       if (!isPrivateChat(ctx)) {
@@ -5890,19 +5787,6 @@ bot.on("message", async (ctx) => {
       return showRecentWinners(ctx);
     }
 
-    if (isPrivateChat(ctx) && ["📈 Leaderboard", "Leaderboard", "leaderboard", "Profit Leaderboard", "profit leaderboard", "📈 盈利榜", "盈利榜"].includes(cleaned)) {
-      clearSession(ctx);
-
-      if (!hasSelectedLanguage(ctx)) {
-        return showLanguageSelection(ctx);
-      }
-
-      if (!hasAcceptedRules(ctx)) {
-        return showStartRules(ctx);
-      }
-
-      return showProfitLeaderboard(ctx);
-    }
 
     if (cleaned.startsWith("/")) return;
 
