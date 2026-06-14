@@ -379,22 +379,29 @@ function getTelegramUserLabel(userLike) {
   return "Unknown TG";
 }
 
-function formatSelectionWithFlags(match, selection) {
+function formatSelectionWithFlags(match, selection, ctxOrLang = null) {
   const raw = String(selection || "").trim();
   const upper = raw.toUpperCase();
   const teamAFlag = getTeamFlag(match.team_a);
   const teamBFlag = getTeamFlag(match.team_b);
+  const zh = isZh(ctxOrLang);
 
   if (upper === "A_OTHER") {
-    return `${teamAFlag} Other ${match.team_a} Win ${teamBFlag}`;
+    return zh
+      ? `${teamAFlag} 其他 ${match.team_a} 胜 ${teamBFlag}`
+      : `${teamAFlag} Other ${match.team_a} Win ${teamBFlag}`;
   }
 
   if (upper === "DRAW_OTHER") {
-    return `${teamAFlag} Other Draw ${teamBFlag}`;
+    return zh
+      ? `${teamAFlag} 其他平局 ${teamBFlag}`
+      : `${teamAFlag} Other Draw ${teamBFlag}`;
   }
 
   if (upper === "B_OTHER") {
-    return `${teamAFlag} Other ${match.team_b} Win ${teamBFlag}`;
+    return zh
+      ? `${teamAFlag} 其他 ${match.team_b} 胜 ${teamBFlag}`
+      : `${teamAFlag} Other ${match.team_b} Win ${teamBFlag}`;
   }
 
   const score = parseScoreValue(raw);
@@ -402,7 +409,7 @@ function formatSelectionWithFlags(match, selection) {
     return `${teamAFlag} ${score.text} ${teamBFlag}`;
   }
 
-  return `${teamAFlag} ${labelForSelection(match, selection)} ${teamBFlag}`;
+  return `${teamAFlag} ${labelForSelection(match, selection, ctxOrLang)} ${teamBFlag}`;
 }
 
 function isValidUid(uid) {
@@ -552,18 +559,19 @@ function getSelectionOptions(match) {
   return fallback;
 }
 
-function labelForSelection(match, selection) {
+function labelForSelection(match, selection, ctxOrLang = null) {
   const raw = String(selection || "").trim();
   const upper = raw.toUpperCase();
+  const zh = isZh(ctxOrLang);
 
-  if (upper === "A") return `${match.team_a} Win`;
-  if (upper === "B") return `${match.team_b} Win`;
-  if (upper === "DRAW") return "Draw";
-  if (upper === "A_OTHER") return `Other ${match.team_a} Win`;
-  if (upper === "DRAW_OTHER") return "Other Draw";
-  if (upper === "B_OTHER") return `Other ${match.team_b} Win`;
+  if (upper === "A") return zh ? `${match.team_a} 胜` : `${match.team_a} Win`;
+  if (upper === "B") return zh ? `${match.team_b} 胜` : `${match.team_b} Win`;
+  if (upper === "DRAW") return zh ? "平局" : "Draw";
+  if (upper === "A_OTHER") return zh ? `其他 ${match.team_a} 胜` : `Other ${match.team_a} Win`;
+  if (upper === "DRAW_OTHER") return zh ? "其他平局" : "Other Draw";
+  if (upper === "B_OTHER") return zh ? `其他 ${match.team_b} 胜` : `Other ${match.team_b} Win`;
 
-  return raw || "Unknown";
+  return raw || (zh ? "未知" : "Unknown");
 }
 
 function parseScoreValue(input) {
@@ -594,9 +602,17 @@ function getSelectionOutcome(selection) {
 }
 
 function getOutcomeLabel(match, outcome, ctxOrLang = null) {
-  if (outcome === "A") return `${getTeamFlag(match.team_a)} Win`;
-  if (outcome === "B") return `${getTeamFlag(match.team_b)} Win`;
-  return "Draw";
+  const zh = isZh(ctxOrLang);
+
+  if (outcome === "A") {
+    return zh ? `${getTeamFlag(match.team_a)} ${match.team_a}胜` : `${getTeamFlag(match.team_a)} Win`;
+  }
+
+  if (outcome === "B") {
+    return zh ? `${getTeamFlag(match.team_b)} ${match.team_b}胜` : `${getTeamFlag(match.team_b)} Win`;
+  }
+
+  return zh ? "🤝 平局" : "Draw";
 }
 
 function getOutcomeCallbackLabel(match, outcome, totals = null, ctxOrLang = null) {
@@ -607,8 +623,8 @@ function getOutcomeCallbackLabel(match, outcome, totals = null, ctxOrLang = null
   return `${label} | ${formatAmount(getOutcomeTotal(match, totals, outcome))} ${match.currency}`;
 }
 
-function formatSelectionButtonLabel(match, option) {
-  return formatSelectionWithFlags(match, option);
+function formatSelectionButtonLabel(match, option, ctxOrLang = null) {
+  return formatSelectionWithFlags(match, option, ctxOrLang);
 }
 
 function generateScoreOptions(startScore = "0:0", endScore = "5:5", lastOption = "Others") {
@@ -1234,7 +1250,7 @@ function buildOutcomeKeyboard(match, totals, ctxOrLang = null) {
   return Markup.inlineKeyboard([
     [
       Markup.button.callback(getOutcomeCallbackLabel(match, "A", null, ctxOrLang), `wcoutcome:${match.match_code}:A`),
-      Markup.button.callback("Draw", `wcoutcome:${match.match_code}:DRAW`),
+      Markup.button.callback(getOutcomeCallbackLabel(match, "DRAW", null, ctxOrLang), `wcoutcome:${match.match_code}:DRAW`),
       Markup.button.callback(getOutcomeCallbackLabel(match, "B", null, ctxOrLang), `wcoutcome:${match.match_code}:B`)
     ],
     [Markup.button.callback(isZh(ctxOrLang) ? "返回" : "Back", `wcdate:${encodeDateKey(dateKey)}`)]
@@ -1245,7 +1261,7 @@ function buildScoreKeyboard(match, outcome, ctxOrLang = null) {
   const options = getOptionsByOutcome(match, outcome);
   const buttons = options.map((option) =>
     Markup.button.callback(
-      formatSelectionButtonLabel(match, option),
+      formatSelectionButtonLabel(match, option, ctxOrLang),
       `wcsel:${match.match_code}:${option}`
     )
   );
@@ -2960,13 +2976,13 @@ function buildAmountPrompt(match, selection, pool, prefix = "", ctxOrLang = null
 ` : "";
 
   if (isZh(ctxOrLang)) {
-    return `${intro}🔸 选择: ${formatSelectionWithFlags(match, selection)}
+    return `${intro}🔸 选择: ${formatSelectionWithFlags(match, selection, ctxOrLang)}
 🔸 奖池: ${formatAmount(pool)} ${match.currency}
 
 请输入你的 UE 投票金额。最低: ${formatAmount(MIN_BET_AMOUNT)} ${match.currency}`;
   }
 
-  return `${intro}🔸 Selection: ${formatSelectionWithFlags(match, selection)}
+  return `${intro}🔸 Selection: ${formatSelectionWithFlags(match, selection, ctxOrLang)}
 🔸 Pool: ${formatAmount(pool)} ${match.currency}
 
 Please enter your UE voting amount. Minimum: ${formatAmount(MIN_BET_AMOUNT)} ${match.currency}`;
@@ -3041,7 +3057,7 @@ async function handleAmountInput(ctx, text, session) {
 🔸 订单 ID：<code>${escapeHtml(data.order_code)}</code>
 🔸 UID：<code>${escapeHtml(data.ueex_uid)}</code>
 🔸 TG：${escapeHtml(getTelegramUserLabel(data))}
-🔸 选择：${escapeHtml(formatSelectionWithFlags(match, data.selection))}
+🔸 选择：${escapeHtml(formatSelectionWithFlags(match, data.selection, ctx))}
 🔸 金额：${formatAmount(amount)} ${match.currency}
 
 ❗️请转账 ${formatAmount(amount)} ${match.currency} 到以下 BSC 地址：
@@ -3153,7 +3169,7 @@ async function cancelPendingOrder(ctx, orderCode) {
 🔸 订单 ID: ${order.order_code}
 🔸 UID: ${order.ueex_uid}
 🔸 TG: ${getTelegramUserLabel(order)}
-🔸 选择: ${match ? formatSelectionWithFlags(match, order.selection) : order.selection}
+🔸 选择: ${match ? formatSelectionWithFlags(match, order.selection, ctx) : order.selection}
 🔸 金额: ${formatAmount(order.expected_amount)} ${order.currency}`
     : `❌ Order Cancelled
 
@@ -3263,7 +3279,7 @@ async function confirmOrderByCode(ctx, orderCode, amount, options = {}) {
 🔸 订单 ID: ${orderCode}
 🔸 UID: ${order.ueex_uid}
 🔸 TG: ${getTelegramUserLabel(order)}
-🔸 选择: ${formatSelectionWithFlags(matchData, order.selection)}
+🔸 选择: ${formatSelectionWithFlags(matchData, order.selection, order.telegram_id)}
 🔸 确认金额: ${formatAmount(amount)} ${matchData.currency}
 
 📊 点击下方“比赛”可继续投票，或发送 /myvote 查看投票明细。`
@@ -4050,8 +4066,8 @@ function buildWinningUserSettlementMessage(matchData, order, payout) {
 
   if (isZh(order.telegram_id)) {
     return `⚽️ 比赛: ${formatTeamWithFlag(matchData.team_a)} vs ${formatTeamWithFlag(matchData.team_b)}
-🔸 赛果: ${formatSelectionWithFlags(matchData, matchData.result)}
-🔸 你的选择: ${formatSelectionWithFlags(matchData, order.selection)}
+🔸 赛果: ${formatSelectionWithFlags(matchData, matchData.result, order.telegram_id)}
+🔸 你的选择: ${formatSelectionWithFlags(matchData, order.selection, order.telegram_id)}
 🔸 你的投票: ${formatAmount(voteAmount)} ${matchData.currency}
 🔸 预计派奖: ${formatAmount(payout.payoutAmount)} ${matchData.currency}
 🔸 总盈亏: ${pnlSign}${formatAmount(pnl)} ${matchData.currency}
@@ -4076,8 +4092,8 @@ function buildLosingUserSettlementMessage(matchData, order, noWinnerMode = false
     if (settlement?.isFinalMatch) {
       if (isZh(order.telegram_id)) {
         return `⚽️ 比赛: ${formatTeamWithFlag(matchData.team_a)} vs ${formatTeamWithFlag(matchData.team_b)}
-🔸 赛果: ${formatSelectionWithFlags(matchData, matchData.result)}
-🔸 你的选择: ${formatSelectionWithFlags(matchData, order.selection)}
+🔸 赛果: ${formatSelectionWithFlags(matchData, matchData.result, order.telegram_id)}
+🔸 你的选择: ${formatSelectionWithFlags(matchData, order.selection, order.telegram_id)}
 🔸 你的投票: ${formatAmount(voteAmount)} ${matchData.currency}
 🔸 总盈亏: -${formatAmount(voteAmount)} ${matchData.currency}
 
@@ -4097,8 +4113,8 @@ function buildLosingUserSettlementMessage(matchData, order, noWinnerMode = false
 
     if (isZh(order.telegram_id)) {
       return `⚽️ 比赛: ${formatTeamWithFlag(matchData.team_a)} vs ${formatTeamWithFlag(matchData.team_b)}
-🔸 赛果: ${formatSelectionWithFlags(matchData, matchData.result)}
-🔸 你的选择: ${formatSelectionWithFlags(matchData, order.selection)}
+🔸 赛果: ${formatSelectionWithFlags(matchData, matchData.result, order.telegram_id)}
+🔸 你的选择: ${formatSelectionWithFlags(matchData, order.selection, order.telegram_id)}
 🔸 你的投票: ${formatAmount(voteAmount)} ${matchData.currency}
 🔸 总盈亏: -${formatAmount(voteAmount)} ${matchData.currency}
 
@@ -4118,8 +4134,8 @@ function buildLosingUserSettlementMessage(matchData, order, noWinnerMode = false
 
   if (isZh(order.telegram_id)) {
     return `⚽️ 比赛: ${formatTeamWithFlag(matchData.team_a)} vs ${formatTeamWithFlag(matchData.team_b)}
-🔸 赛果: ${formatSelectionWithFlags(matchData, matchData.result)}
-🔸 你的选择: ${formatSelectionWithFlags(matchData, order.selection)}
+🔸 赛果: ${formatSelectionWithFlags(matchData, matchData.result, order.telegram_id)}
+🔸 你的选择: ${formatSelectionWithFlags(matchData, order.selection, order.telegram_id)}
 🔸 你的投票: ${formatAmount(voteAmount)} ${matchData.currency}
 🔸 总盈亏: -${formatAmount(voteAmount)} ${matchData.currency}
 
@@ -4435,12 +4451,12 @@ function getMatchResultDisplay(match, ctxOrLang = null) {
   if (!match) return isZh(ctxOrLang) ? "未开始" : "Not Started";
 
   if (match.result) {
-    return formatSelectionWithFlags(match, match.result);
+    return formatSelectionWithFlags(match, match.result, ctxOrLang);
   }
 
   if (match.status === "locked") return isZh(ctxOrLang) ? "进行中" : "In Progress";
   if (match.status === "resulted" || match.status === "settled") {
-    return match.result ? formatSelectionWithFlags(match, match.result) : isZh(ctxOrLang) ? "进行中" : "In Progress";
+    return match.result ? formatSelectionWithFlags(match, match.result, ctxOrLang) : isZh(ctxOrLang) ? "进行中" : "In Progress";
   }
 
   return isZh(ctxOrLang) ? "未开始" : "Not Started";
@@ -4590,7 +4606,7 @@ async function showMyVote(ctx) {
     const match = matchMap.get(order.match_code);
     const stats = statsMap.get(order.match_code);
     const matchTitle = match ? `${formatTeamWithFlag(match.team_a)} vs ${formatTeamWithFlag(match.team_b)}` : order.match_code;
-    const selection = match ? formatSelectionWithFlags(match, order.selection) : order.selection;
+    const selection = match ? formatSelectionWithFlags(match, order.selection, ctx) : order.selection;
     const amount = order.status === "confirmed" ? order.confirmed_amount : order.expected_amount;
     const amountDecimal = new Decimal(amount || 0);
     const totalPool = stats ? stats.totalPool : new Decimal(0);
