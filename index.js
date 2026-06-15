@@ -23,6 +23,7 @@ const MAX_OPEN_MATCHES_SHOWN = Number(process.env.MAX_OPEN_MATCHES_SHOWN || 500)
 const LIVE_UPDATE_INTERVAL_MS = Number(process.env.LIVE_UPDATE_INTERVAL_MS || 30000);
 const MY_VOTE_PAGE_SIZE = Number(process.env.MY_VOTE_PAGE_SIZE || 3);
 const WINNERS_PAGE_SIZE = Number(process.env.WINNERS_PAGE_SIZE || 5);
+const NEED_RESULT_LIMIT = Number(process.env.NEED_RESULT_LIMIT || 50);
 const MIN_BET_AMOUNT = new Decimal(process.env.MIN_BET_AMOUNT || 1000);
 const BOT_USERNAME = (process.env.BOT_USERNAME || "").replace(/^@/, "");
 const AUTO_CONFIRM_ENABLED = String(process.env.AUTO_CONFIRM_ENABLED || "false").toLowerCase() === "true";
@@ -4883,6 +4884,84 @@ ${lines.join("\n\n")}`);
 }
 
 
+
+function formatPastDuration(dateValue) {
+  const diffMs = Date.now() - new Date(dateValue).getTime();
+
+  if (!Number.isFinite(diffMs) || diffMs < 0) return "just now";
+
+  const totalMinutes = Math.floor(diffMs / 60000);
+  const days = Math.floor(totalMinutes / 1440);
+  const hours = Math.floor((totalMinutes % 1440) / 60);
+  const minutes = totalMinutes % 60;
+
+  if (days > 0) {
+    return `${days}d ${hours}h ago`;
+  }
+
+  if (hours > 0) {
+    return `${hours}h ${minutes}m ago`;
+  }
+
+  return `${Math.max(minutes, 0)}m ago`;
+}
+
+async function showMatchesNeedingResult(ctx, dateFilter = "") {
+  if (!(await requireAdminControlChat(ctx))) return;
+
+  const normalizedDate = String(dateFilter || "").trim();
+
+  if (normalizedDate && !/^\d{4}\.\d{2}\.\d{2}$/.test(normalizedDate)) {
+    return ctx.reply("Invalid format. Example: /need_result_2026.06.14");
+  }
+
+  const nowIso = new Date().toISOString();
+  const safeLimit = Math.min(Math.max(Number.isFinite(NEED_RESULT_LIMIT) ? NEED_RESULT_LIMIT : 50, 1), 100);
+
+  let query = supabase
+    .from("wc_matches")
+    .select("*")
+    .in("status", ["open", "locked"])
+    .lte("betting_end_at", nowIso)
+    .order("match_date", { ascending: true })
+    .order("match_time", { ascending: true })
+    .limit(safeLimit);
+
+  if (normalizedDate) {
+    query = query.eq("match_date", normalizedDate);
+  }
+
+  const { data: matches, error } = await query;
+
+  if (error) {
+    return ctx.reply(`Failed to load matches waiting for result: ${error.message}`);
+  }
+
+  if (!matches || matches.length === 0) {
+    return ctx.reply(normalizedDate
+      ? `✅ No matches waiting for result on ${normalizedDate}.`
+      : "✅ No matches waiting for result.");
+  }
+
+  const lines = matches.map((match, index) => {
+    const matchTime = [match.match_date, match.match_time, match.match_timezone].filter(Boolean).join(" ") || "TBD";
+    const stage = match.match_stage ? `
+Stage: ${match.match_stage}` : "";
+    const closedAgo = match.betting_end_at ? formatPastDuration(match.betting_end_at) : "unknown";
+
+    return `${index + 1}. ${formatTeamWithFlag(match.team_a)} vs ${formatTeamWithFlag(match.team_b)}
+Match ID: ${match.match_code}${stage}
+Match Time: ${matchTime}
+Status: ${String(match.status || "").toUpperCase()}
+Voting Closed: ${closedAgo}
+Set result: /result_${match.match_code}_0:0`;
+  });
+
+  return ctx.reply(`⏰ Matches Waiting for Result${normalizedDate ? ` | ${normalizedDate}` : ""}
+
+${lines.join("\n\n")}`);
+}
+
 async function compensateOrder(ctx, text) {
   if (!(await requireAdminControlChat(ctx))) return;
 
@@ -5186,6 +5265,8 @@ Admin:
 /settle_WC0001 - Publish settlement
 /pending - View latest pending orders in admin group/private
 /pending_WC0001 - View pending orders for a match
+/need_result - View matches whose voting is closed but result is not recorded
+/need_result_2026.06.14 - View result-pending matches on a date
 /send_topic_rules - Send official pinned activity rules to World Cup topic with Start Prediction button
 /chatid - Check chat ID and topic ID
 /ping - Test bot`;
@@ -5678,6 +5759,11 @@ bot.on("message", async (ctx) => {
 
     if (/^\/paycheck_sign_debug$/i.test(cleaned)) {
       return payCheckSignDebugCommand(ctx);
+    }
+
+    if (/^\/need_result(?:_(\d{4}\.\d{2}\.\d{2}))?$/i.test(cleaned)) {
+      const needResultMatch = cleaned.match(/^\/need_result(?:_(\d{4}\.\d{2}\.\d{2}))?$/i);
+      return showMatchesNeedingResult(ctx, needResultMatch?.[1] || "");
     }
 
     if (/^\/pending(?:_(WC[A-Z0-9]+))?$/i.test(cleaned)) {
