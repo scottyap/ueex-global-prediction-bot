@@ -4954,7 +4954,8 @@ Match ID: ${match.match_code}${stage}
 Match Time: ${matchTime}
 Status: ${String(match.status || "").toUpperCase()}
 Voting Closed: ${closedAgo}
-Set result: /result_${match.match_code}_0:0`;
+Set result: /result_${match.match_code}_0:0
+If no confirmed orders: /no_bet_${match.match_code}`;
   });
 
   return ctx.reply(`⏰ Matches Waiting for Result${normalizedDate ? ` | ${normalizedDate}` : ""}
@@ -5059,6 +5060,126 @@ function buildAdminCancellationMessage(matchData, orders) {
 
 Refund List:
 ${lines.length ? lines.join("\n\n") : "No confirmed participants."}`;
+}
+
+
+async function getConfirmedOrderCount(matchCode) {
+  const { count, error } = await supabase
+    .from("wc_orders")
+    .select("order_code", { count: "exact", head: true })
+    .eq("match_code", matchCode)
+    .eq("status", "confirmed");
+
+  if (error) {
+    throw new Error(`Failed to count confirmed orders: ${error.message}`);
+  }
+
+  return count || 0;
+}
+
+async function deletePublicLiveMatchMessage(matchData) {
+  const chatId = matchData?.live_chat_id || matchData?.chat_id;
+  const messageId = matchData?.live_message_id;
+
+  if (!chatId || !messageId) {
+    return "not found";
+  }
+
+  try {
+    await bot.telegram.deleteMessage(chatId, messageId);
+    return "deleted";
+  } catch (error) {
+    console.error(`Failed to delete no-bet live message ${matchData.match_code}:`, error.message);
+    return `delete failed: ${error.message}`;
+  }
+}
+
+async function updateMatchAsNoBet(matchCode) {
+  const now = new Date().toISOString();
+  const payload = {
+    status: "no_bet",
+    result: null,
+    updated_at: now
+  };
+
+  const { error } = await supabase
+    .from("wc_matches")
+    .update(payload)
+    .eq("match_code", matchCode);
+
+  if (!error) {
+    return { status: "no_bet", fallbackUsed: false };
+  }
+
+  console.error(`Failed to update ${matchCode} as no_bet, falling back to hidden:`, error.message);
+
+  const { error: fallbackError } = await supabase
+    .from("wc_matches")
+    .update({ status: "hidden", result: null, updated_at: now })
+    .eq("match_code", matchCode);
+
+  if (fallbackError) {
+    throw new Error(`Failed to close match as no-bet: ${fallbackError.message}`);
+  }
+
+  return { status: "hidden", fallbackUsed: true, originalError: error.message };
+}
+
+async function closeNoBetMatch(ctx, text) {
+  if (!(await requireAdminControlChat(ctx))) return;
+
+  const cleaned = cleanCommandText(text);
+  const match = cleaned.match(/^\/no_bet_(WC[A-Z0-9]+)$/i);
+
+  if (!match) {
+    return ctx.reply("Invalid format. Example: /no_bet_WC0001");
+  }
+
+  const matchCode = match[1].toUpperCase();
+  const matchData = await getMatch(matchCode);
+
+  if (!matchData) {
+    return ctx.reply("Match not found.");
+  }
+
+  if (!["open", "locked"].includes(String(matchData.status || "").toLowerCase())) {
+    return ctx.reply(`This match cannot be closed as no-bet. Current status: ${matchData.status}`);
+  }
+
+  if (new Date(matchData.betting_end_at).getTime() > Date.now()) {
+    return ctx.reply(`Voting is still open for this match. Close time: ${matchData.betting_end_at}`);
+  }
+
+  const voidedPendingCount = await autoVoidExpiredPendingOrders(matchData);
+  const confirmedCount = await getConfirmedOrderCount(matchCode);
+
+  if (confirmedCount > 0) {
+    return ctx.reply(`This match has ${confirmedCount} confirmed order(s), so it cannot be closed as no-bet.
+
+Please record and settle the result normally:
+/result_${matchCode}_0:0
+/preview_${matchCode}
+/settle_${matchCode}`);
+  }
+
+  await supabase.from("wc_payouts").delete().eq("match_code", matchCode);
+  await supabase.from("wc_settlements").delete().eq("match_code", matchCode);
+
+  const statusResult = await updateMatchAsNoBet(matchCode);
+  const publicMessageResult = await deletePublicLiveMatchMessage(matchData);
+
+  return ctx.reply(`✅ Match closed as no-bet.
+
+⚽️ Match: ${formatTeamWithFlag(matchData.team_a)} vs ${formatTeamWithFlag(matchData.team_b)}
+🔸 Match ID: ${matchCode}
+🔸 Final Status: ${String(statusResult.status).toUpperCase()}
+🔸 Confirmed Orders: 0
+🔸 Pending Orders Auto-Voided: ${voidedPendingCount}
+🔸 Public Result Announcement: not sent
+🔸 Final Carryover Generated: 0 ${matchData.currency || DEFAULT_CURRENCY}
+🔸 Public Match Card: ${publicMessageResult}
+
+${statusResult.fallbackUsed ? `Note: database rejected status no_bet, so this match was hidden instead. Original error: ${statusResult.originalError}` : "This match will no longer appear in /need_result."}`);
 }
 
 async function cancelMatch(ctx, text) {
@@ -5267,6 +5388,7 @@ Admin:
 /pending_WC0001 - View pending orders for a match
 /need_result - View matches whose voting is closed but result is not recorded
 /need_result_2026.06.14 - View result-pending matches on a date
+/no_bet_WC0001 - Close a voting-closed match with no confirmed orders, without publishing result or carryover
 /send_topic_rules - Send official pinned activity rules to World Cup topic with Start Prediction button
 /chatid - Check chat ID and topic ID
 /ping - Test bot`;
@@ -5731,6 +5853,11 @@ bot.on("message", async (ctx) => {
     if (/^\/settle_/i.test(cleaned)) {
       if (!(await requireAdminControlChat(ctx))) return;
       return settleMatch(ctx, cleaned);
+    }
+
+    if (/^\/no_bet_/i.test(cleaned)) {
+      if (!(await requireAdminControlChat(ctx))) return;
+      return closeNoBetMatch(ctx, cleaned);
     }
 
     if (/^\/cancel_/i.test(cleaned)) {
