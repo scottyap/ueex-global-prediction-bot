@@ -25,6 +25,11 @@ const MY_VOTE_PAGE_SIZE = Number(process.env.MY_VOTE_PAGE_SIZE || 3);
 const WINNERS_PAGE_SIZE = Number(process.env.WINNERS_PAGE_SIZE || 5);
 const NEED_RESULT_LIMIT = Number(process.env.NEED_RESULT_LIMIT || 50);
 const MIN_BET_AMOUNT = new Decimal(process.env.MIN_BET_AMOUNT || 1000);
+const MIN_BET_AMOUNT_ROUND_32 = new Decimal(process.env.MIN_BET_AMOUNT_ROUND_32 || process.env.MIN_BET_AMOUNT_R32 || 2000);
+const MIN_BET_AMOUNT_ROUND_16 = new Decimal(process.env.MIN_BET_AMOUNT_ROUND_16 || process.env.MIN_BET_AMOUNT_R16 || 3000);
+const MIN_BET_AMOUNT_QUARTER_FINAL = new Decimal(process.env.MIN_BET_AMOUNT_QUARTER_FINAL || process.env.MIN_BET_AMOUNT_QF || 4000);
+const MIN_BET_AMOUNT_SEMI_FINAL = new Decimal(process.env.MIN_BET_AMOUNT_SEMI_FINAL || process.env.MIN_BET_AMOUNT_SF || 5000);
+const MIN_BET_AMOUNT_FINAL = new Decimal(process.env.MIN_BET_AMOUNT_FINAL || 10000);
 const BOT_USERNAME = (process.env.BOT_USERNAME || "").replace(/^@/, "");
 const AUTO_CONFIRM_ENABLED = String(process.env.AUTO_CONFIRM_ENABLED || "false").toLowerCase() === "true";
 const PAYMENT_CHECK_INTERVAL_MS = Number(process.env.PAYMENT_CHECK_INTERVAL_MS || 30000);
@@ -34,6 +39,8 @@ const UEEX_RECEIVER_UID = process.env.UEEX_RECEIVER_UID || RECEIVER_UID;
 const UEEX_INTERNAL_EXCHANGE_TYPE = Number(process.env.UEEX_INTERNAL_EXCHANGE_TYPE || 1);
 const UEEX_SUCCESS_STATUS = process.env.UEEX_SUCCESS_STATUS || "success";
 const PAYMENT_MATCH_MODE = process.env.PAYMENT_MATCH_MODE || "remark_or_uid_amount";
+// UID is now the primary payment confirmation key. When true, UID+exact amount can match even if the user left a non-order remark.
+const UID_AMOUNT_MATCH_ALLOW_REMARK = String(process.env.UID_AMOUNT_MATCH_ALLOW_REMARK || "true").toLowerCase() === "true";
 const UEEX_API_BASE_URL = (process.env.UEEX_API_BASE_URL || "").replace(/\/$/, "");
 const UEEX_API_KEY = process.env.UEEX_API_KEY || "";
 const UEEX_API_SECRET = process.env.UEEX_API_SECRET || "";
@@ -456,6 +463,45 @@ function formatAmountForCommand(value, maxDp = 8) {
   const decimal = new Decimal(value || 0);
   const fixed = decimal.toDecimalPlaces(maxDp, Decimal.ROUND_DOWN).toFixed();
   return fixed.replace(/(\.\d*?)0+$/, "$1").replace(/\.$/, "") || "0";
+}
+
+function getStageMinimumBetAmount(matchOrStage = null) {
+  const rawStage = typeof matchOrStage === "object"
+    ? String(matchOrStage?.match_stage || "")
+    : String(matchOrStage || "");
+
+  const stage = rawStage.toLowerCase();
+  const compact = stage.replace(/[\s_\-]/g, "");
+
+  if (/半决赛|semi/.test(stage) || compact.includes("semifinal") || compact.includes("semifinals")) {
+    return MIN_BET_AMOUNT_SEMI_FINAL;
+  }
+
+  if (/8强|quarter/.test(stage) || compact.includes("quarterfinal") || compact.includes("quarterfinals") || compact.includes("roundof8") || compact === "r8" || compact.includes("last8")) {
+    return MIN_BET_AMOUNT_QUARTER_FINAL;
+  }
+
+  if (/16强/.test(stage) || compact.includes("roundof16") || compact.includes("round16") || compact === "r16" || compact.includes("last16") || compact.includes("top16")) {
+    return MIN_BET_AMOUNT_ROUND_16;
+  }
+
+  if (/32强/.test(stage) || compact.includes("roundof32") || compact.includes("round32") || compact === "r32" || compact.includes("last32") || compact.includes("top32")) {
+    return MIN_BET_AMOUNT_ROUND_32;
+  }
+
+  if (/决赛/.test(stage) || compact === "final" || compact.includes("worldcupfinal") || compact.includes("grandfinal")) {
+    return MIN_BET_AMOUNT_FINAL;
+  }
+
+  return MIN_BET_AMOUNT;
+}
+
+function buildMinimumBetRuleLine(ctxOrLang = null) {
+  if (isZh(ctxOrLang)) {
+    return `💵 最低投票：小组赛/普通赛事 ${formatAmount(MIN_BET_AMOUNT)} UE；32强 ${formatAmount(MIN_BET_AMOUNT_ROUND_32)} UE；16强 ${formatAmount(MIN_BET_AMOUNT_ROUND_16)} UE；8强 ${formatAmount(MIN_BET_AMOUNT_QUARTER_FINAL)} UE；半决赛 ${formatAmount(MIN_BET_AMOUNT_SEMI_FINAL)} UE；决赛 ${formatAmount(MIN_BET_AMOUNT_FINAL)} UE。`;
+  }
+
+  return `💵 Minimum vote: Group/regular matches ${formatAmount(MIN_BET_AMOUNT)} UE; Round of 32 ${formatAmount(MIN_BET_AMOUNT_ROUND_32)} UE; Round of 16 ${formatAmount(MIN_BET_AMOUNT_ROUND_16)} UE; Quarter-finals ${formatAmount(MIN_BET_AMOUNT_QUARTER_FINAL)} UE; Semi-finals ${formatAmount(MIN_BET_AMOUNT_SEMI_FINAL)} UE; Final ${formatAmount(MIN_BET_AMOUNT_FINAL)} UE.`;
 }
 
 function escapeHtml(value) {
@@ -1111,9 +1157,9 @@ function buildRulesMessage(ctxOrLang = null) {
   if (isZh(ctxOrLang)) {
     return `📜 规则
 
-💵 最低投票：${formatAmount(MIN_BET_AMOUNT)} UE
+${buildMinimumBetRuleLine(ctxOrLang)}
 🏦 官方地址：${TRANSFER_ADDRESS}
-🧾 转账备注必须填写订单 ID；少转需补足，多转仅订单金额计入奖池。
+🧾 系统将主要根据绑定 UID + 转账金额确认订单；订单 ID 不再作为必填备注。少转需补足，多转仅订单金额计入奖池。
 ⏰ 开赛前 15 分钟停止投票，逾期到账可能不计入。
 🧮 平台手续费：${feePercent}%，从每场奖池扣除。
 🎯 猜中准确比分，按中奖金额占比瓜分净奖池。
@@ -1125,9 +1171,9 @@ function buildRulesMessage(ctxOrLang = null) {
 
   return `📜 Rules
 
-💵 Minimum vote: ${formatAmount(MIN_BET_AMOUNT)} UE
+${buildMinimumBetRuleLine(ctxOrLang)}
 🏦 Official address: ${TRANSFER_ADDRESS}
-🧾 Use the Order ID as the transfer remark. Underpaid orders need top-up; overpaid orders count only the order amount.
+🧾 Orders are mainly confirmed by bound UID + transfer amount. Order ID is no longer required as the transfer remark. Underpaid orders need top-up; overpaid orders count only the order amount.
 ⏰ Voting closes 15 minutes before kick-off. Late payments may not count.
 🧮 Platform fee: ${feePercent}% per match pool.
 🎯 Exact-score winners share the net pool by winning-vote amount.
@@ -1153,7 +1199,7 @@ function buildHowToPlayMessage(ctxOrLang = null) {
     return `🎮 玩法
 
 1️⃣ 选择比赛、方向、准确比分和 UE 金额。
-2️⃣ 按 Bot 显示金额转账，备注填写订单 ID。
+2️⃣ 按 Bot 显示金额转账，系统将根据绑定 UID + 金额确认订单。
 3️⃣ 到账确认后，投票才计入奖池。
 
 🏆 奖池
@@ -1164,13 +1210,13 @@ function buildHowToPlayMessage(ctxOrLang = null) {
 • 本场无人猜中：净奖池累计到世界杯总决赛。
 • 总决赛中奖用户瓜分：总决赛净奖池 + 累计奖池。
 
-⚠️ 订单备注要正确；少转需补足，多转超出部分由 Admin 人工处理。`;
+⚠️ 订单 ID 不再作为必填备注；如少转需补足，多转超出部分由 Admin 人工处理。`;
   }
 
   return `🎮 How to Play
 
 1️⃣ Pick a match, side, exact score, and UE amount.
-2️⃣ Transfer the bot-shown amount and use the Order ID as the remark.
+2️⃣ Transfer the bot-shown amount. The system confirms mainly by your bound UID + amount.
 3️⃣ Your vote counts after payment confirmation.
 
 🏆 Prize Pool
@@ -1181,7 +1227,7 @@ function buildHowToPlayMessage(ctxOrLang = null) {
 • No exact-score winners: the net pool rolls over to the World Cup Final.
 • Final winners share: Final net pool + carryover pool.
 
-⚠️ Use the correct remark. Underpaid orders need top-up; extra overpayment is reviewed by Admin.`;
+⚠️ Order ID is no longer required as the transfer remark. Underpaid orders need top-up; extra overpayment is reviewed by Admin.`;
 }
 
 async function showHowToPlay(ctx) {
@@ -1366,9 +1412,9 @@ function buildPublicMatchMessage(match, totals) {
 
 📌 Rules:
 • Tap Vote Now to enter the bot and submit your prediction.
-• Minimum voting amount: ${formatAmount(MIN_BET_AMOUNT)} ${match.currency}.
+• Minimum voting amount: ${formatAmount(getStageMinimumBetAmount(match))} ${match.currency}.
 • Transfer the exact ${match.currency} amount to the BSC address ${TRANSFER_ADDRESS}.
-• Use your Order ID as the transfer remark.
+• Orders are mainly confirmed by bound UID + amount. Order ID is no longer required as the transfer remark.
 • Score settlement uses 90 mins + stoppage time only, excluding extra time/penalties.
 • Votes are counted only after payment confirmation.`;
 }
@@ -1869,19 +1915,29 @@ function getPaymentCounterpartyUid(record) {
   return String(record?.counterpartyUid || record?.toUid || "").trim();
 }
 
+function isLikelyOrderRemark(value) {
+  return /^O[A-Z0-9]+$/i.test(String(value || "").trim());
+}
+
 function isUidAmountPaymentMatch(record, order) {
   if (PAYMENT_MATCH_MODE !== "remark_or_uid_amount") return false;
   if (!record || !order) return false;
 
-  // Keep this conservative: UID + amount auto-match only applies when the transfer remark is empty.
-  if (!isEmptyPaymentRemark(record)) return false;
+  const remark = String(record?.remark || "").trim();
+
+  if (!UID_AMOUNT_MATCH_ALLOW_REMARK && remark) return false;
+
+  // If the user explicitly typed another order code as the remark, do not steal it by UID+amount matching.
+  if (UID_AMOUNT_MATCH_ALLOW_REMARK && isLikelyOrderRemark(remark) && remark.toUpperCase() !== String(order.order_code || "").toUpperCase()) {
+    return false;
+  }
 
   const payerUid = getPaymentCounterpartyUid(record);
   if (!payerUid || payerUid === "0") return false;
 
   if (payerUid !== String(order.ueex_uid || "")) return false;
 
-  // No-remark matching must be exact amount to avoid accidentally matching top-ups or overpayments.
+  // UID+amount matching must be exact amount to avoid accidentally matching top-ups or overpayments.
   return decimalEquals(record.amount, order.expected_amount);
 }
 
@@ -2516,6 +2572,7 @@ async function payCheckDebugCommand(ctx) {
       `Records fetched: ${records.length}`,
       `Payment type: ${UEEX_PAYMENT_TYPE}`,
       `Payment match mode: ${PAYMENT_MATCH_MODE}`,
+      `UID+amount allows non-order remark: ${UID_AMOUNT_MATCH_ALLOW_REMARK ? "yes" : "no"}`,
       `UID match mode: ${UEEX_UID_MATCH_MODE}`,
       `Item ID: ${UEEX_PAYMENT_ITEM_ID}`,
       `Receiver UID: ${UEEX_RECEIVER_UID}`,
@@ -2979,28 +3036,25 @@ function buildAmountPrompt(match, selection, pool, prefix = "", ctxOrLang = null
   const intro = prefix ? `${prefix}
 
 ` : "";
+  const minBetAmount = getStageMinimumBetAmount(match);
 
   if (isZh(ctxOrLang)) {
     return `${intro}🔸 选择: ${formatSelectionWithFlags(match, selection, ctxOrLang)}
 🔸 奖池: ${formatAmount(pool)} ${match.currency}
 
-请输入你的 UE 投票金额。最低: ${formatAmount(MIN_BET_AMOUNT)} ${match.currency}`;
+请输入你的 UE 投票金额。最低: ${formatAmount(minBetAmount)} ${match.currency}`;
   }
 
   return `${intro}🔸 Selection: ${formatSelectionWithFlags(match, selection, ctxOrLang)}
 🔸 Pool: ${formatAmount(pool)} ${match.currency}
 
-Please enter your UE voting amount. Minimum: ${formatAmount(MIN_BET_AMOUNT)} ${match.currency}`;
+Please enter your UE voting amount. Minimum: ${formatAmount(minBetAmount)} ${match.currency}`;
 }
 async function handleAmountInput(ctx, text, session) {
   const amount = parsePositiveAmount(text);
 
   if (!amount) {
     return ctx.reply(isZh(ctx) ? "金额格式错误。请输入有效的 UE 金额，例如：1,000 或 1,150.5" : "Invalid amount. Please enter a positive UE amount, for example: 1,000 or 1,150.5", getPrivateMainMenu(ctx));
-  }
-
-  if (amount.lt(MIN_BET_AMOUNT)) {
-    return ctx.reply(isZh(ctx) ? `最低投票金额为 ${formatAmount(MIN_BET_AMOUNT)} UE。` : `Minimum voting amount is ${formatAmount(MIN_BET_AMOUNT)} UE.`, getPrivateMainMenu(ctx));
   }
 
   const match = await getMatch(session.matchCode);
@@ -3013,6 +3067,11 @@ async function handleAmountInput(ctx, text, session) {
   if (!isVotingOpen(match)) {
     clearSession(ctx);
     return ctx.reply(isZh(ctx) ? "该比赛已停止投票。" : "Voting for this match is already closed.");
+  }
+
+  const minBetAmount = getStageMinimumBetAmount(match);
+  if (amount.lt(minBetAmount)) {
+    return ctx.reply(isZh(ctx) ? `最低投票金额为 ${formatAmount(minBetAmount)} UE。` : `Minimum voting amount is ${formatAmount(minBetAmount)} UE.`, getPrivateMainMenu(ctx));
   }
 
   const userRecord = await getUserByTelegramId(ctx.from.id);
@@ -3067,8 +3126,9 @@ async function handleAmountInput(ctx, text, session) {
 
 ❗️请转账 ${formatAmount(amount)} ${match.currency} 到以下 BSC 地址：
 <code>${escapeHtml(TRANSFER_ADDRESS)}</code>
-❗️转账备注必须准确填写：<code>${escapeHtml(data.order_code)}</code>
-⚠️ 未填写备注或备注错误，将导致资金无法自动上账/确认。
+✅ 系统将主要根据你的绑定 UID + 转账金额自动确认订单。
+🧾 转账备注可留空；如填写，建议填写订单 ID：<code>${escapeHtml(data.order_code)}</code>，便于人工核对。
+⚠️ 请不要填写其他无关备注，避免影响人工核对。
 ⚠️ 如少转，请继续补足剩余金额；累计到账达到订单金额后才可确认。
 ⚠️ 如多转，系统仅按订单金额计入奖池，超出部分由 Admin 人工核对处理。
 ❗️你的投票将在付款确认后计入。`
@@ -3083,8 +3143,9 @@ async function handleAmountInput(ctx, text, session) {
 
 ❗️Please transfer ${formatAmount(amount)} ${match.currency} to the BSC address below:
 <code>${escapeHtml(TRANSFER_ADDRESS)}</code>.
-❗️Transfer Remark must be exactly: <code>${escapeHtml(data.order_code)}</code>
-⚠️ Missing or incorrect remarks will prevent funds from being credited/confirmed automatically.
+✅ The system confirms mainly by your bound UID + transfer amount.
+🧾 Transfer remark is optional. If you enter one, we recommend using the Order ID: <code>${escapeHtml(data.order_code)}</code> for manual review.
+⚠️ Please avoid unrelated remarks to make manual review easier.
 ⚠️ If you underpay, please top up the remaining amount. The order can be confirmed only after the total received amount reaches the order amount.
 ⚠️ If you overpay, only the order amount is counted into the prize pool. The excess amount will be manually reviewed by Admin.
 ❗️Your vote will be counted after payment confirmation.`;
@@ -3115,7 +3176,7 @@ async function handleAmountInput(ctx, text, session) {
 🔸 TG: ${getTelegramUserLabel(data)}
 🔸 Selection: ${formatSelectionWithFlags(match, data.selection)}
 🔸 Amount: ${formatAmount(amount)} ${match.currency}
-🔸 Remark: ${data.order_code}
+🔸 Remark: optional; Order ID can be used for manual review
 
 Confirm step 1:
 /confirm_${data.order_code}_${formatAmountForCommand(amount)}
@@ -5283,11 +5344,12 @@ Predict the exact score, join the match prize pool, and share rewards with other
 1. Tap “⚽ Start Prediction”.
 2. Choose a match, result direction, exact score, and UE amount.
 3. Transfer the exact amount shown by the bot.
-4. Enter the exact Order ID as the transfer remark.
+4. The system confirms mainly by your bound UID + transfer amount.
 5. Your prediction counts only after payment confirmation.
 
 ⚠️ Important
-• Correct Order ID remark is required.
+• Order ID is no longer required as the transfer remark. If you enter a remark, using the Order ID can help manual review.
+• Minimum vote: Group/regular matches ${formatAmount(MIN_BET_AMOUNT)} UE; Round of 32 ${formatAmount(MIN_BET_AMOUNT_ROUND_32)} UE; Round of 16 ${formatAmount(MIN_BET_AMOUNT_ROUND_16)} UE; Quarter-finals ${formatAmount(MIN_BET_AMOUNT_QUARTER_FINAL)} UE; Semi-finals ${formatAmount(MIN_BET_AMOUNT_SEMI_FINAL)} UE; Final ${formatAmount(MIN_BET_AMOUNT_FINAL)} UE.
 • Underpaid orders must be topped up.
 • Overpaid orders count only the order amount; extra funds will be reviewed by Admin.
 • Voting closes 15 minutes before kick-off.
